@@ -1,0 +1,20 @@
+---
+import PublicLayout from "../../layouts/PublicLayout.astro";
+import DownloadCard from "../../components/DownloadCard.astro";
+import { downloadsByType, trackScript } from "../../lib/content.js";
+---
+<PublicLayout title="Downloads">
+  <main>
+    <section class="hero inner">
+      <h1>Downloads</h1>
+      <p>Apps, desktop software, firmware, manuals and version history.</p>
+    </section>
+    {downloadsByType().map((group) => (
+      <section class="section inner">
+        <h2>{group.type}</h2>
+        <div class="grid">{group.downloads.map((download) => <DownloadCard download={download} />)}</div>
+      </section>
+    ))}
+  </main>
+  <script is:inline set:html={trackScript("page_view")} />
+</PublicLayout>

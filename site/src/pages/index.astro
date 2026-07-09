@@ -1,0 +1,52 @@
+---
+import PublicLayout from "../layouts/PublicLayout.astro";
+import ProductCard from "../components/ProductCard.astro";
+import { content, downloadsByType, sitePath, trackScript } from "../lib/content.js";
+
+const featured = content.products.filter((product) => product.featured).slice(0, 6);
+const recent = content.products.slice(0, 6);
+---
+<PublicLayout title="Home">
+  <main>
+    <section class="hero inner">
+      <h1>{content.settings.brandName}</h1>
+      <p>{content.settings.introText}</p>
+    </section>
+    <section class="section inner">
+      <h2>Product categories</h2>
+      <div class="grid">
+        {content.categories.map((category) => (
+          <article class="card">
+            <h3>{category.name}</h3>
+            <p>{category.description}</p>
+            <a class="button secondary" href={sitePath(`/categories/${category.slug}/`)}>View products</a>
+          </article>
+        ))}
+      </div>
+    </section>
+    <section class="section inner">
+      <h2>{featured.length ? "Featured products" : "Recent products"}</h2>
+      <div class="grid">
+        {(featured.length ? featured : recent).map((product) => <ProductCard product={product} />)}
+      </div>
+    </section>
+    <section class="section inner">
+      <h2>Downloads</h2>
+      <div class="grid">
+        {downloadsByType().map((group) => (
+          <article class="card">
+            <h3>{group.type}</h3>
+            <p>{group.downloads.length} item(s)</p>
+            <a class="button secondary" href={sitePath("/downloads/")}>Open downloads</a>
+          </article>
+        ))}
+      </div>
+    </section>
+    <section class="section inner">
+      <h2>Support</h2>
+      <p class="muted">Need product help, setup details, manuals or store links?</p>
+      <a class="button" href={sitePath("/support/")}>Contact support</a>
+    </section>
+  </main>
+  <script is:inline set:html={trackScript("page_view")} />
+</PublicLayout>

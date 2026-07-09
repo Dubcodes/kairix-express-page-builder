@@ -1,0 +1,48 @@
+---
+import PublicLayout from "../../layouts/PublicLayout.astro";
+import { assetPath, content, trackScript } from "../../lib/content.js";
+
+export function getStaticPaths() {
+  return content.downloads.map((download) => ({ params: { slug: download.slug }, props: { download } }));
+}
+
+const { download } = Astro.props;
+const latest = download.latest || download.versions?.[0];
+const previousVersions = (download.versions || []).filter((version) => !latest || version.id !== latest.id);
+---
+<PublicLayout title={`${download.name} version history`} description={download.short_description}>
+  <main>
+    <section class="hero inner">
+      <h1>{download.name}</h1>
+      <p>{download.short_description}</p>
+    </section>
+    {latest && (
+      <section class="section inner">
+        <h2>Current version</h2>
+        <article class="card">
+          <h3>{latest.version_number}</h3>
+          <p class="muted">{download.type} {latest.release_date ? `- ${latest.release_date}` : ""}</p>
+          <div set:html={latest.release_notes}></div>
+          {latest.download_url && <a class="button" href={assetPath(latest.download_url)} data-track-download={download.id}>Download/open</a>}
+        </article>
+      </section>
+    )}
+    <section class="section inner">
+      <h2>Previous versions</h2>
+      <div class="grid">
+        {previousVersions.map((version) => (
+          <article class="card">
+            <h3>{version.version_number} {version.deprecated ? <span class="pill">Deprecated</span> : null}</h3>
+            <p class="muted">{download.type} {version.release_date ? `- ${version.release_date}` : ""} {version.file_size ? `- ${version.file_size}` : ""}</p>
+            {version.warning_text && <p style="color: var(--warn);">{version.warning_text}</p>}
+            <div set:html={version.release_notes}></div>
+            {version.checksum && <p class="muted">Checksum: {version.checksum}</p>}
+            {version.download_url && <a class="button secondary" href={assetPath(version.download_url)} data-track-download={download.id}>Download/open</a>}
+          </article>
+        ))}
+        {!previousVersions.length && <p class="muted">No previous versions yet.</p>}
+      </div>
+    </section>
+  </main>
+  <script is:inline set:html={trackScript("version_history_viewed", { downloadId: download.id })} />
+</PublicLayout>

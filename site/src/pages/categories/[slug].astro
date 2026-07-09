@@ -1,0 +1,26 @@
+---
+import PublicLayout from "../../layouts/PublicLayout.astro";
+import ProductCard from "../../components/ProductCard.astro";
+import { content, trackScript } from "../../lib/content.js";
+
+export function getStaticPaths() {
+  return content.categories.map((category) => ({ params: { slug: category.slug }, props: { category } }));
+}
+
+const { category } = Astro.props;
+const products = content.products.filter((product) => product.category_id === category.id);
+---
+<PublicLayout title={category.name} description={category.description}>
+  <main>
+    <section class="hero inner">
+      <h1>{category.name}</h1>
+      <p>{category.description}</p>
+    </section>
+    <section class="section inner">
+      <div class="grid">
+        {products.map((product) => <ProductCard product={product} />)}
+      </div>
+    </section>
+  </main>
+  <script is:inline set:html={trackScript("page_view")} />
+</PublicLayout>

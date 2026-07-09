@@ -1,0 +1,20 @@
+{
+  "name": "kairix-express-page-builder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local demo static product support portal builder for marketplace sellers.",
+  "workspaces": [
+    "admin",
+    "site"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace admin",
+    "start": "npm run start --workspace admin",
+    "build": "npm run build --workspace site",
+    "publish": "node admin/src/scripts/publish.js",
+    "check": "node --check admin/src/server.js && npm run build --workspace site"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

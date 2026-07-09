@@ -1,0 +1,21 @@
+---
+import PublicLayout from "../layouts/PublicLayout.astro";
+import { content, trackScript } from "../lib/content.js";
+const s = content.settings;
+---
+<PublicLayout title="Support">
+  <main>
+    <section class="hero inner">
+      <h1>Support</h1>
+      <p>Use the contact details below for product help, app downloads, firmware, manuals and marketplace order questions.</p>
+    </section>
+    <section class="section inner">
+      <div class="grid">
+        {s.supportEmail && <article class="card"><h2>Email</h2><a href={`mailto:${s.supportEmail}`}>{s.supportEmail}</a></article>}
+        {s.supportLink && <article class="card"><h2>Support link</h2><a href={s.supportLink}>{s.supportLink}</a></article>}
+        {s.marketplaceUrl && <article class="card"><h2>Marketplace store</h2><a href={s.marketplaceUrl}>{s.marketplaceUrl}</a></article>}
+      </div>
+    </section>
+  </main>
+  <script is:inline set:html={trackScript("page_view")} />
+</PublicLayout>

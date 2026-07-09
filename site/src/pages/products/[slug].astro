@@ -1,0 +1,127 @@
+---
+import PublicLayout from "../../layouts/PublicLayout.astro";
+import ProductCard from "../../components/ProductCard.astro";
+import DownloadCard from "../../components/DownloadCard.astro";
+import { assetPath, content, trackScript } from "../../lib/content.js";
+
+export function getStaticPaths() {
+  return content.products.map((product) => ({ params: { slug: product.slug }, props: { product } }));
+}
+
+const { product } = Astro.props;
+const images = (product.gallery?.length ? product.gallery : product.image ? [product.image] : []).map(assetPath);
+---
+<PublicLayout title={product.name} description={product.short_description}>
+  <main>
+    <section class="hero inner">
+      <h1>{product.name}</h1>
+      <p>{product.short_description}</p>
+    </section>
+    <section class="section inner product-detail">
+      <style>
+        .product-detail {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+          gap: 24px;
+          align-items: start;
+        }
+        .main-image {
+          width: 100%;
+          aspect-ratio: 4 / 3;
+          object-fit: contain;
+          background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 8px;
+        }
+        .thumbs {
+          display: flex;
+          gap: 8px;
+          margin-top: 10px;
+          overflow-x: auto;
+        }
+        .thumbs button {
+          width: 72px;
+          height: 58px;
+          padding: 0;
+          border: 1px solid var(--line);
+          border-radius: 6px;
+          background: var(--surface);
+          cursor: pointer;
+        }
+        .thumbs img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          border-radius: 5px;
+        }
+        @media (max-width: 860px) {
+          .product-detail { grid-template-columns: 1fr; }
+        }
+      </style>
+      <div>
+        {images.length ? <img id="mainImage" class="main-image" src={images[0]} alt={product.name}> : <div class="placeholder-media">Product image</div>}
+        {images.length > 1 && (
+          <div class="thumbs">
+            {images.map((image) => <button type="button" data-thumb={image} aria-label="Show image"><img src={image} alt=""></button>)}
+          </div>
+        )}
+      </div>
+      <aside class="card">
+        {product.sku && <p><strong>SKU:</strong> {product.sku}</p>}
+        {product.version_label && <p><strong>Version:</strong> {product.version_label}</p>}
+        <div class="button-row">
+          {product.marketplace_url && <a class="button" href={product.marketplace_url} data-track-marketplace={product.id}>{content.settings.defaultMarketplaceLabel}</a>}
+          {product.marketplace_qr && <button class="button secondary" type="button" data-qr="marketplace">QR</button>}
+          <a class="button secondary" href="#downloads">Downloads</a>
+        </div>
+      </aside>
+    </section>
+    <section class="section inner">
+      <div set:html={product.long_description}></div>
+      {product.descriptionImages?.map((image) => <img src={assetPath(image)} alt="" style="width: 100%; margin: 18px 0; border-radius: 8px;">)}
+      {product.setupImages?.length > 0 && <h2>Setup screenshots</h2>}
+      <div class="grid">{product.setupImages?.map((image) => <img src={assetPath(image)} alt="" style="border-radius: 8px;">)}</div>
+    </section>
+    <section class="section inner" id="downloads">
+      <h2>Downloads and support</h2>
+      <div class="grid">
+        {product.downloads?.map((download) => <DownloadCard download={download} />)}
+      </div>
+    </section>
+    {product.related?.length > 0 && (
+      <section class="section inner">
+        <h2>Related products</h2>
+        <div class="grid">{product.related.map((related) => <ProductCard product={related} />)}</div>
+      </section>
+    )}
+  </main>
+  {product.marketplace_qr && (
+    <div class="qr-popover" id="qrMarketplace">
+      <div class="qr-box">
+        <h2>Marketplace QR</h2>
+        <img src={assetPath(product.marketplace_qr)} alt="Marketplace QR code">
+        <button class="button secondary" type="button" data-close-qr>Close</button>
+      </div>
+    </div>
+  )}
+  <script is:inline set:html={trackScript("product_view", { productId: product.id })} />
+  <script is:inline>
+    document.querySelectorAll("[data-thumb]").forEach(function(button) {
+      button.addEventListener("click", function() {
+        document.querySelector("#mainImage").src = button.dataset.thumb;
+      });
+    });
+    document.querySelectorAll("[data-qr]").forEach(function(button) {
+      button.addEventListener("click", function() {
+        var modal = document.querySelector("#qrMarketplace");
+        if (modal) modal.classList.add("open");
+        if (window.KAIRIX_TRACK) window.KAIRIX_TRACK("qr_opened", { productId: Number(button.closest("main")?.dataset.product || "0") });
+      });
+    });
+    document.querySelectorAll("[data-close-qr]").forEach(function(button) {
+      button.addEventListener("click", function() {
+        button.closest(".qr-popover").classList.remove("open");
+      });
+    });
+  </script>
+</PublicLayout>

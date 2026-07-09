@@ -1,0 +1,70 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const thisFile = fileURLToPath(import.meta.url);
+const adminSrcDir = path.dirname(thisFile);
+const projectRoot = path.resolve(adminSrcDir, "..", "..");
+
+function boolEnv(name, fallback = false) {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function resolveFromRoot(value, fallback) {
+  const input = value || fallback;
+  return path.isAbsolute(input) ? input : path.resolve(projectRoot, input);
+}
+
+export const config = {
+  projectRoot,
+  adminSrcDir,
+  port: Number(process.env.PORT || 8080),
+  databasePath: resolveFromRoot(process.env.DATABASE_PATH, "./data/kairix.sqlite"),
+  uploadsDir: resolveFromRoot(process.env.UPLOADS_DIR, "./uploads"),
+  generatedSiteDir: resolveFromRoot(process.env.GENERATED_SITE_DIR, "./generated-site"),
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:4321",
+  publicSiteBasePath: process.env.PUBLIC_SITE_BASE_PATH ?? "/preview",
+  adminBaseUrl: process.env.ADMIN_BASE_URL || "http://localhost:8080",
+  trustProxy: boolEnv("TRUST_PROXY", false),
+  cookieSecure: boolEnv("COOKIE_SECURE", process.env.NODE_ENV === "production"),
+  sessionSecret: process.env.SESSION_SECRET || "local-dev-change-me",
+  maxUploadMb: Number(process.env.MAX_UPLOAD_MB || 25),
+  allowedUploadMimeTypes: new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/svg+xml",
+    "application/pdf",
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/x-msdownload",
+    "application/vnd.microsoft.portable-executable",
+    "application/x-apple-diskimage",
+    "application/octet-stream",
+    "text/plain"
+  ]),
+  allowedUploadExtensions: new Set([
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".svg",
+    ".pdf",
+    ".txt",
+    ".zip",
+    ".bin",
+    ".hex",
+    ".uf2",
+    ".exe",
+    ".dmg",
+    ".pkg",
+    ".msi"
+  ]),
+  riskyUploadExtensions: new Set([".exe", ".dmg", ".pkg", ".msi", ".bin", ".hex", ".uf2"])
+};

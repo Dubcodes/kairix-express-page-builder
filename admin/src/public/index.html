@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kairix Page Manager</title>
+    <link rel="stylesheet" href="/assets/admin.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Kairix</p>
+          <h1 id="adminTitle">Kairix Page Manager</h1>
+        </div>
+        <div class="session">
+          <span id="sessionLabel"></span>
+          <button id="logoutBtn" class="ghost hidden" type="button">Log out</button>
+        </div>
+      </header>
+      <main id="app" class="main"></main>
+    </div>
+    <template id="setupTemplate">
+      <section class="panel narrow">
+        <h2>First-run setup</h2>
+        <p class="muted">Create the business/store profile for this product support portal and set up the first Page Manager admin account. This is for support pages, not a replacement store.</p>
+        <form id="setupForm" class="form-grid">
+          <label>Brand/store name<input name="brandName" required minlength="2"></label>
+          <label>Logo upload<input name="logo" type="file" accept="image/*"></label>
+          <label>Marketplace store URL<input name="marketplaceUrl" type="url" placeholder="https://"></label>
+          <label>Admin username<input name="username" required minlength="3"></label>
+          <label>Admin email<input name="email" type="email"></label>
+          <label>Admin password<input name="password" type="password" required minlength="10"></label>
+          <button type="submit">Create admin</button>
+        </form>
+      </section>
+    </template>
+    <template id="loginTemplate">
+      <section class="panel narrow">
+        <h2>Admin login</h2>
+        <form id="loginForm" class="form-grid">
+          <label>Username or email<input name="username" autocomplete="username" required></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit">Log in</button>
+        </form>
+      </section>
+    </template>
+    <script src="/assets/admin.js" type="module"></script>
+  </body>
+</html>

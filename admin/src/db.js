@@ -1,0 +1,303 @@
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
+import { config } from "./config.js";
+
+fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
+
+export const db = new Database(config.databasePath);
+db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
+
+export const ROLES = [
+  "Admin",
+  "Publisher",
+  "Editor",
+  "File Manager",
+  "Analytics Viewer",
+  "Read Only"
+];
+
+export function migrate() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      email TEXT,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'Read Only',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS invites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_hash TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL DEFAULT 'Read Only',
+      email TEXT,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL UNIQUE,
+      description TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      original_name TEXT NOT NULL,
+      stored_name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      sku TEXT,
+      version_label TEXT,
+      category_id INTEGER,
+      marketplace_url TEXT,
+      short_description TEXT,
+      long_description TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      featured INTEGER NOT NULL DEFAULT 0,
+      marketplace_name TEXT,
+      marketplace_listing_id TEXT,
+      imported_title TEXT,
+      edited_title TEXT,
+      imported_description TEXT,
+      edited_description TEXT,
+      imported_image_urls TEXT,
+      import_sync_status TEXT,
+      last_imported_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS product_images (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      file_id INTEGER NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'gallery',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+      FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS download_objects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      type TEXT NOT NULL DEFAULT 'Other',
+      short_description TEXT,
+      external_url TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS download_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      download_id INTEGER NOT NULL,
+      version_number TEXT NOT NULL,
+      release_date TEXT,
+      file_id INTEGER,
+      external_url TEXT,
+      release_notes TEXT,
+      is_latest INTEGER NOT NULL DEFAULT 0,
+      deprecated INTEGER NOT NULL DEFAULT 0,
+      warning_text TEXT,
+      file_size TEXT,
+      checksum TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (download_id) REFERENCES download_objects(id) ON DELETE CASCADE,
+      FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS support_packs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      description TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS support_pack_downloads (
+      support_pack_id INTEGER NOT NULL,
+      download_id INTEGER NOT NULL,
+      PRIMARY KEY (support_pack_id, download_id),
+      FOREIGN KEY (support_pack_id) REFERENCES support_packs(id) ON DELETE CASCADE,
+      FOREIGN KEY (download_id) REFERENCES download_objects(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS product_support_packs (
+      product_id INTEGER NOT NULL,
+      support_pack_id INTEGER NOT NULL,
+      PRIMARY KEY (product_id, support_pack_id),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+      FOREIGN KEY (support_pack_id) REFERENCES support_packs(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS product_download_locks (
+      product_id INTEGER NOT NULL,
+      download_id INTEGER NOT NULL,
+      version_id INTEGER,
+      PRIMARY KEY (product_id, download_id),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+      FOREIGN KEY (download_id) REFERENCES download_objects(id) ON DELETE CASCADE,
+      FOREIGN KEY (version_id) REFERENCES download_versions(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS related_products (
+      product_id INTEGER NOT NULL,
+      related_product_id INTEGER NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (product_id, related_product_id),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+      FOREIGN KEY (related_product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      path TEXT,
+      product_id INTEGER,
+      download_id INTEGER,
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS publish_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      status TEXT NOT NULL,
+      message TEXT,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+  `);
+
+  addColumn("users", "status", "TEXT NOT NULL DEFAULT 'active'");
+  addColumn("users", "last_login_at", "TEXT");
+  addColumn("users", "password_reset_required", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("users", "support_access_expires_at", "TEXT");
+  addColumn("users", "disabled_at", "TEXT");
+  addColumn("invites", "requires_approval", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("invites", "created_user_id", "INTEGER");
+  addColumn("invites", "accepted_at", "TEXT");
+  addColumn("invites", "status", "TEXT NOT NULL DEFAULT 'open'");
+  addColumn("products", "stock_tracking", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("products", "stock_count", "INTEGER");
+  addColumn("products", "stock_low_threshold", "INTEGER NOT NULL DEFAULT 5");
+  addColumn("products", "stock_display_mode", "TEXT NOT NULL DEFAULT 'friendly'");
+  addColumn("products", "stock_source", "TEXT NOT NULL DEFAULT 'manual'");
+  addColumn("products", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("products", "archived", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("products", "color_options", "TEXT");
+  addColumn("products", "option_notes", "TEXT");
+  addColumn("products", "publish_state", "TEXT NOT NULL DEFAULT 'draft'");
+  addColumn("categories", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("categories", "archived", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("download_objects", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("download_objects", "archived", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("download_objects", "display_group", "TEXT");
+  addColumn("download_versions", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("support_packs", "bundle_file_id", "INTEGER");
+  addColumn("support_packs", "auto_generate_zip", "INTEGER NOT NULL DEFAULT 1");
+  addColumn("support_packs", "archived", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("support_packs", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_hash TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      event_type TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id INTEGER,
+      message TEXT,
+      metadata TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS contact_submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      product_id INTEGER,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'new',
+      metadata TEXT,
+      ip_address TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+    );
+  `);
+}
+
+function addColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
+  if (!columns.includes(column)) db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+}
+
+export function getSettings() {
+  const rows = db.prepare("SELECT key, value FROM settings").all();
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+export function setSetting(key, value) {
+  db.prepare(`
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(key, value ?? "");
+}
+
+export function userCount() {
+  return db.prepare("SELECT COUNT(*) AS count FROM users").get().count;
+}
+
+export function cleanupExpiredSessions() {
+  db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
+}
+
+migrate();

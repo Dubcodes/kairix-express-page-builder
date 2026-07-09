@@ -1,0 +1,16 @@
+node_modules/
+.env
+.DS_Store
+npm-debug.log*
+.cache/
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/*.sqlite-*
+uploads/*
+!uploads/.gitkeep
+generated-site/*
+!generated-site/.gitkeep
+site/src/data/content.json
+site/public/uploads/*
+!site/public/uploads/.gitkeep

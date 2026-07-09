@@ -1,0 +1,10 @@
+node_modules
+admin/node_modules
+site/node_modules
+.git
+.env
+data
+uploads
+generated-site
+site/src/data/content.json
+npm-debug.log

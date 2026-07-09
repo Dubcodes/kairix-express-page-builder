@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Accept Invite - Kairix</title>
+    <link rel="stylesheet" href="/assets/admin.css">
+  </head>
+  <body>
+    <main class="main">
+      <section class="panel narrow">
+        <h1>Accept invite</h1>
+        <p class="muted">Create your account from this one-time link.</p>
+        <form id="inviteForm" class="form-grid">
+          <label>Username<input name="username" required minlength="3"></label>
+          <label>Email<input name="email" type="email"></label>
+          <label>Password<input name="password" type="password" required minlength="10"></label>
+          <button type="submit">Create account</button>
+        </form>
+        <p id="message" class="status"></p>
+      </section>
+    </main>
+    <script>
+      const form = document.querySelector("#inviteForm");
+      const message = document.querySelector("#message");
+      const token = new URLSearchParams(location.search).get("token");
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(form));
+        const response = await fetch("/api/invites/accept", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...data, token })
+        });
+        const json = await response.json();
+        message.textContent = response.ok ? "Account created. You can now log in." : json.error || "Invite failed.";
+      });
+    </script>
+  </body>
+</html>

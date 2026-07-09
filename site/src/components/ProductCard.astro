@@ -1,0 +1,12 @@
+---
+import { productImage, sitePath } from "../lib/content.js";
+const { product } = Astro.props;
+const image = productImage(product);
+---
+<article class="card">
+  {image ? <img src={image} alt={product.name} style="aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; margin-bottom: 12px;"> : <div class="placeholder-media" style="margin-bottom: 12px;">Product image</div>}
+  <h3>{product.name}</h3>
+  {product.sku && <p class="muted">SKU: {product.sku}</p>}
+  <p>{product.short_description}</p>
+  <a class="button secondary" href={sitePath(`/products/${product.slug}/`)}>View product</a>
+</article>
