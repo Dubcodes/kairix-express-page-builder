@@ -3,6 +3,7 @@ node_modules/
 .DS_Store
 npm-debug.log*
 .cache/
+site/.astro/
 data/*.sqlite
 data/*.sqlite-wal
 data/*.sqlite-shm
