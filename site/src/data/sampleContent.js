@@ -10,6 +10,7 @@ export const sampleContent = {
     introText: "Find product information, manuals, apps, firmware and support downloads.",
     supportEmail: "support@example.com",
     supportLink: "https://example.com/support",
+    contactFormEnabled: false,
     theme: "clean-light",
     defaultMarketplaceLabel: "Buy on AliExpress",
     footerText: "Demo content. Replace from the admin panel."
@@ -37,6 +38,12 @@ export const sampleContent = {
       short_description: "A fake product used to test the support portal workflow.",
       long_description: "<p>This static page was generated from structured content.</p>",
       featured: 1,
+      stock_tracking: 1,
+      stock_count: 12,
+      stock_low_threshold: 5,
+      stock_display_mode: "friendly",
+      stock_source: "manual",
+      publish_state: "published",
       image: "",
       gallery: [],
       descriptionImages: [],
@@ -56,6 +63,8 @@ export const sampleContent = {
           }
         }
       ],
+      supportPacks: [],
+      softwareBundles: [],
       related: [],
       support_qr: "",
       marketplace_qr: ""
@@ -87,7 +96,25 @@ export const sampleContent = {
       ]
     }
   ],
-  supportPacks: []
+  supportPacks: [
+    {
+      id: 1,
+      name: "Controller Starter Software Bundle",
+      slug: "controller-starter-software-bundle",
+      description: "Starter app and setup resources for the demo controller.",
+      bundle_url: "",
+      downloads: [],
+      externalLinks: [],
+      productsUsing: []
+    }
+  ],
+  softwareBundles: []
 };
 
 sampleContent.categories[0].products = sampleContent.products;
+sampleContent.supportPacks[0].downloads = sampleContent.downloads;
+sampleContent.supportPacks[0].externalLinks = sampleContent.downloads.filter((download) => download.latest?.download_url);
+sampleContent.supportPacks[0].productsUsing = sampleContent.products.map((product) => ({ id: product.id, name: product.name, slug: product.slug }));
+sampleContent.softwareBundles = sampleContent.supportPacks;
+sampleContent.products[0].supportPacks = sampleContent.supportPacks;
+sampleContent.products[0].softwareBundles = sampleContent.supportPacks;

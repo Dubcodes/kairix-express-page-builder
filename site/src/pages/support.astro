@@ -16,6 +16,48 @@ const s = content.settings;
         {s.marketplaceUrl && <article class="card"><h2>Marketplace store</h2><a href={s.marketplaceUrl}>{s.marketplaceUrl}</a></article>}
       </div>
     </section>
+    {s.contactFormEnabled && (
+      <section class="section inner">
+        <h2>Contact support</h2>
+        <p class="muted">For order or payment issues, use your marketplace order page. For setup, downloads, manuals or firmware help, send a message here.</p>
+        <form id="contactForm" class="card" style="display: grid; gap: 12px;">
+          <label>Name<input name="name" required></label>
+          <label>Email<input name="email" type="email" required></label>
+          <label>Product
+            <select name="productId">
+              <option value="">Not sure / general question</option>
+              {content.products.map((product) => <option value={product.id}>{product.name}</option>)}
+            </select>
+          </label>
+          <label>Message<textarea name="message" required></textarea></label>
+          <button class="button" type="submit">Send message</button>
+          <p id="contactStatus" class="muted"></p>
+        </form>
+      </section>
+    )}
   </main>
   <script is:inline set:html={trackScript("page_view")} />
+  <script is:inline>
+    var contactForm = document.querySelector("#contactForm");
+    if (contactForm) {
+      contactForm.addEventListener("submit", function(event) {
+        event.preventDefault();
+        var status = document.querySelector("#contactStatus");
+        var data = Object.fromEntries(new FormData(contactForm));
+        data.productId = data.productId ? Number(data.productId) : null;
+        fetch("/api/contact-submissions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data)
+        }).then(function(response) {
+          if (!response.ok) throw new Error("Contact form unavailable");
+          status.textContent = "Message sent.";
+          contactForm.reset();
+          if (window.KAIRIX_TRACK) window.KAIRIX_TRACK("contact_form_submission", {});
+        }).catch(function() {
+          status.textContent = "The form is unavailable here. Please use the support email or link above.";
+        });
+      });
+    }
+  </script>
 </PublicLayout>

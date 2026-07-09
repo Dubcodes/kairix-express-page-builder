@@ -2,7 +2,7 @@
 import PublicLayout from "../../layouts/PublicLayout.astro";
 import ProductCard from "../../components/ProductCard.astro";
 import DownloadCard from "../../components/DownloadCard.astro";
-import { assetPath, content, trackScript } from "../../lib/content.js";
+import { assetPath, content, sitePath, stockLabel, trackScript } from "../../lib/content.js";
 
 export function getStaticPaths() {
   return content.products.map((product) => ({ params: { slug: product.slug }, props: { product } }));
@@ -10,9 +10,11 @@ export function getStaticPaths() {
 
 const { product } = Astro.props;
 const images = (product.gallery?.length ? product.gallery : product.image ? [product.image] : []).map(assetPath);
+const stock = stockLabel(product);
+const bundles = product.softwareBundles || product.supportPacks || [];
 ---
 <PublicLayout title={product.name} description={product.short_description}>
-  <main>
+  <main data-product={product.id}>
     <section class="hero inner">
       <h1>{product.name}</h1>
       <p>{product.short_description}</p>
@@ -69,10 +71,11 @@ const images = (product.gallery?.length ? product.gallery : product.image ? [pro
       <aside class="card">
         {product.sku && <p><strong>SKU:</strong> {product.sku}</p>}
         {product.version_label && <p><strong>Version:</strong> {product.version_label}</p>}
+        {stock && <p><span class="pill" title="Availability shown by the seller">{stock}</span></p>}
         <div class="button-row">
           {product.marketplace_url && <a class="button" href={product.marketplace_url} data-track-marketplace={product.id}>{content.settings.defaultMarketplaceLabel}</a>}
-          {product.marketplace_qr && <button class="button secondary" type="button" data-qr="marketplace">QR</button>}
-          <a class="button secondary" href="#downloads">Downloads</a>
+          {product.marketplace_qr && <button class="button secondary" type="button" data-qr="marketplace" title="Show marketplace QR code" aria-label="Show marketplace QR code">QR</button>}
+          <a class="button secondary" href="#downloads">Software & downloads</a>
         </div>
       </aside>
     </section>
@@ -83,7 +86,24 @@ const images = (product.gallery?.length ? product.gallery : product.image ? [pro
       <div class="grid">{product.setupImages?.map((image) => <img src={assetPath(image)} alt="" style="border-radius: 8px;">)}</div>
     </section>
     <section class="section inner" id="downloads">
-      <h2>Downloads and support</h2>
+      <h2>Software Bundles and downloads</h2>
+      {bundles.length > 0 && (
+        <div class="grid" style="margin-bottom: 18px;">
+          {bundles.map((bundle) => (
+            <article class="card">
+              <h3>{bundle.name}</h3>
+              <p>{bundle.description}</p>
+              <div class="button-row">
+                {bundle.bundle_url && <a class="button" href={assetPath(bundle.bundle_url)} data-track-software-bundle={bundle.id} title="Download software bundle" aria-label={`Download ${bundle.name}`}>Download software bundle</a>}
+              </div>
+              <ul>
+                {bundle.downloads?.map((download) => <li>{download.name} · {download.type} {download.latest?.version_number ? `· ${download.latest.version_number}` : ""} · <a href={sitePath(`/downloads/${download.slug}/`)} title="View version history" aria-label={`View ${download.name} version history`}>Version history</a></li>)}
+              </ul>
+              {bundle.externalLinks?.length > 0 && <p class="muted">External app/store links are listed individually and are not included in the ZIP.</p>}
+            </article>
+          ))}
+        </div>
+      )}
       <div class="grid">
         {product.downloads?.map((download) => <DownloadCard download={download} />)}
       </div>

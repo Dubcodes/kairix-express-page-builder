@@ -212,6 +212,8 @@ export function migrate() {
   addColumn("invites", "created_user_id", "INTEGER");
   addColumn("invites", "accepted_at", "TEXT");
   addColumn("invites", "status", "TEXT NOT NULL DEFAULT 'open'");
+  addColumn("invites", "label", "TEXT");
+  addColumn("invites", "support_access_hours", "INTEGER");
   addColumn("products", "stock_tracking", "INTEGER NOT NULL DEFAULT 0");
   addColumn("products", "stock_count", "INTEGER");
   addColumn("products", "stock_low_threshold", "INTEGER NOT NULL DEFAULT 5");

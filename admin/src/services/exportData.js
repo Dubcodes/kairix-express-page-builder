@@ -50,11 +50,11 @@ function latestVersion(downloadId) {
 
 export async function buildExportData() {
   const settings = getSettings();
-  const categories = db.prepare("SELECT * FROM categories ORDER BY name").all();
+  const categories = db.prepare("SELECT * FROM categories WHERE archived = 0 ORDER BY sort_order, name").all();
   const files = db.prepare("SELECT * FROM files").all();
   const filesById = new Map(files.map((file) => [file.id, file]));
 
-  const downloads = db.prepare("SELECT * FROM download_objects ORDER BY type, name").all().map((download) => {
+  const downloads = db.prepare("SELECT * FROM download_objects WHERE archived = 0 ORDER BY sort_order, type, name").all().map((download) => {
     const versions = db.prepare(`
       SELECT v.*, f.stored_name, f.original_name, f.mime_type, f.size
       FROM download_versions v
@@ -75,14 +75,37 @@ export async function buildExportData() {
   });
   const downloadsById = new Map(downloads.map((download) => [download.id, download]));
 
-  const supportPacks = db.prepare("SELECT * FROM support_packs ORDER BY name").all().map((pack) => {
+  const supportPacks = db.prepare(`
+    SELECT sp.*, f.stored_name AS bundle_stored_name, f.original_name AS bundle_original_name, f.size AS bundle_size
+    FROM support_packs sp
+    LEFT JOIN files f ON f.id = sp.bundle_file_id
+    WHERE sp.archived = 0
+    ORDER BY sp.sort_order, sp.name
+  `).all().map((pack) => {
     const packDownloads = db.prepare(`
       SELECT d.id FROM download_objects d
       JOIN support_pack_downloads spd ON spd.download_id = d.id
       WHERE spd.support_pack_id = ?
       ORDER BY d.type, d.name
     `).all(pack.id).map((row) => downloadsById.get(row.id)).filter(Boolean);
-    return { ...pack, description: clean(pack.description), downloads: packDownloads };
+    const productsUsing = db.prepare(`
+      SELECT p.id, p.name, p.slug, p.sku
+      FROM products p
+      JOIN product_support_packs psp ON psp.product_id = p.id
+      WHERE psp.support_pack_id = ? AND p.archived = 0
+      ORDER BY p.name
+    `).all(pack.id);
+    return {
+      ...pack,
+      description: clean(pack.description),
+      downloads: packDownloads,
+      bundle_url: pack.bundle_stored_name ? `/uploads/${pack.bundle_stored_name}` : "",
+      bundle_size: pack.bundle_size || null,
+      externalLinks: packDownloads
+        .map((download) => ({ download, latest: download.latest }))
+        .filter((item) => item.latest?.download_url && /^https?:\/\//i.test(item.latest.download_url)),
+      productsUsing
+    };
   });
   const supportPacksById = new Map(supportPacks.map((pack) => [pack.id, pack]));
 
@@ -90,8 +113,8 @@ export async function buildExportData() {
     SELECT p.*, c.name AS category_name, c.slug AS category_slug
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.status = 'published'
-    ORDER BY p.featured DESC, p.updated_at DESC
+    WHERE p.archived = 0 AND (p.status = 'published' OR p.publish_state = 'published')
+    ORDER BY p.featured DESC, p.sort_order, p.name
   `).all();
 
   const products = [];
@@ -147,6 +170,7 @@ export async function buildExportData() {
       descriptionImages,
       setupImages,
       supportPacks: packs,
+      softwareBundles: packs,
       downloads: [...lockedDownloads, ...packDownloads.filter((download) => !lockedDownloads.some((locked) => locked.id === download.id))],
       related,
       public_url: productUrl,
@@ -167,6 +191,7 @@ export async function buildExportData() {
       introText: clean(settings.introText || "Find product information, manuals, apps, firmware and support downloads."),
       supportEmail: settings.supportEmail || "",
       supportLink: settings.supportLink || "",
+      contactFormEnabled: ["1", "true", "yes", "on"].includes(String(settings.contactFormEnabled || "").toLowerCase()),
       theme: settings.theme || "clean-light",
       defaultMarketplaceLabel: settings.defaultMarketplaceLabel || "Buy on AliExpress",
       footerText: clean(settings.footerText || "")
@@ -178,6 +203,7 @@ export async function buildExportData() {
     })),
     products,
     downloads,
-    supportPacks
+    supportPacks,
+    softwareBundles: supportPacks
   };
 }

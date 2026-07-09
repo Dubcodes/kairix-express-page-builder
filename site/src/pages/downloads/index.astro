@@ -1,14 +1,32 @@
 ---
 import PublicLayout from "../../layouts/PublicLayout.astro";
 import DownloadCard from "../../components/DownloadCard.astro";
-import { downloadsByType, trackScript } from "../../lib/content.js";
+import { assetPath, content, downloadsByType, sitePath, trackScript } from "../../lib/content.js";
 ---
 <PublicLayout title="Downloads">
   <main>
     <section class="hero inner">
       <h1>Downloads</h1>
-      <p>Apps, desktop software, firmware, manuals and version history.</p>
+      <p>Software Bundles, apps, desktop software, firmware, manuals and version history.</p>
     </section>
+    {content.softwareBundles?.length > 0 && (
+      <section class="section inner">
+        <h2>Software Bundles</h2>
+        <div class="grid">
+          {content.softwareBundles.map((bundle) => (
+            <article class="card">
+              <h3>{bundle.name}</h3>
+              <p>{bundle.description}</p>
+              <p class="muted">Includes {bundle.downloads?.length || 0} item(s)</p>
+              <div class="button-row">
+                {bundle.bundle_url && <a class="button" href={assetPath(bundle.bundle_url)} data-track-software-bundle={bundle.id} title="Download software bundle" aria-label={`Download ${bundle.name}`}>Download bundle</a>}
+                {bundle.downloads?.[0] && <a class="button secondary" href={sitePath(`/downloads/${bundle.downloads[0].slug}/`)}>View included downloads</a>}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    )}
     {downloadsByType().map((group) => (
       <section class="section inner">
         <h2>{group.type}</h2>

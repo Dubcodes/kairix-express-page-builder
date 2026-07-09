@@ -8,11 +8,15 @@ A local demo of a low-cost static product support portal builder for AliExpress/
 - The admin header uses the configured business name, for example `ABC Electronics Page Manager`.
 - Admin login uses hashed passwords and HTTP-only session cookies.
 - Roles are modeled for Admin, Publisher, Editor, File Manager, Analytics Viewer, and Read Only.
-- Admin can create categories, products, files, download objects, versions, and support packs.
-- Products can link support packs and render latest linked downloads on the product page.
+- Admins can create team invites, temporary support access links, approval-required users, and password reset links.
+- Admin can create categories, products, media files, downloads, versions, and Software Bundles.
+- Products can track publish state, stock display, related products, Software Bundles, and latest linked downloads.
+- Software Bundles can auto-generate ZIP files during publish when local files are attached.
+- Optional public contact form submissions are stored in the Page Manager, not in the static public site.
 - QR codes are generated during publish for product support URLs and marketplace links.
 - Publish exports structured content to Astro and builds static files into `generated-site`.
 - Public pages are static and do not need the SQLite database at runtime.
+- The Page Manager includes CSRF protection for authenticated write requests, audit events for important admin actions, and basic local analytics.
 - Local storage and deploy providers exist now, with Cloudflare R2/Pages placeholders for later.
 
 ## Project Structure
@@ -72,8 +76,8 @@ If the final static site is deployed under a subpath, set `PUBLIC_SITE_BASE_PATH
 4. Upload product images and any downloadable files.
 5. Create a download object.
 6. Add at least one version and mark it latest.
-7. Create a support pack and link the download object.
-8. Create a product, attach images, link the support pack, and set status to Published.
+7. Create a Software Bundle and link the download.
+8. Create a product, attach images, link the Software Bundle, set stock display, and set publish state to Published.
 9. Click Publish.
 10. Open the generated static preview.
 
@@ -134,8 +138,12 @@ The generated site can always be rebuilt from the database and uploads.
 
 - No public admin registration is available after setup.
 - Invite links are random, expire, and can be used once.
+- Temporary support access links can expire the resulting support account after a configured number of hours.
+- Password reset links are random, expire, and can be used once.
 - Passwords are hashed with bcrypt.
 - Session cookies are HTTP-only and SameSite=Lax.
+- Authenticated write requests require a CSRF token.
+- User, invite, login, product, bundle, settings, and publish actions are written to an audit log.
 - Uploads are stored outside executable code paths.
 - The public site is generated static output and has no database credentials.
 - `.env.example` documents secrets and Cloudflare placeholders; real secrets must stay in `.env`.
