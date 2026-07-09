@@ -53,6 +53,13 @@ export async function buildExportData() {
   const categories = db.prepare("SELECT * FROM categories WHERE archived = 0 ORDER BY sort_order, name").all();
   const files = db.prepare("SELECT * FROM files").all();
   const filesById = new Map(files.map((file) => [file.id, file]));
+  const contactMethods = db.prepare("SELECT label, type, value FROM contact_methods WHERE visible = 1 ORDER BY sort_order, id").all()
+    .map((method) => ({
+      label: clean(method.label),
+      type: clean(method.type),
+      value: clean(method.value)
+    }))
+    .filter((method) => method.label && method.value);
 
   const downloads = db.prepare("SELECT * FROM download_objects WHERE archived = 0 ORDER BY sort_order, type, name").all().map((download) => {
     const versions = db.prepare(`
@@ -191,6 +198,7 @@ export async function buildExportData() {
       introText: clean(settings.introText || "Find product information, manuals, apps, firmware and support downloads."),
       supportEmail: settings.supportEmail || "",
       supportLink: settings.supportLink || "",
+      contactMethods,
       contactFormEnabled: ["1", "true", "yes", "on"].includes(String(settings.contactFormEnabled || "").toLowerCase()),
       theme: settings.theme || "clean-light",
       defaultMarketplaceLabel: settings.defaultMarketplaceLabel || "Buy on AliExpress",

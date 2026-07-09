@@ -274,6 +274,92 @@ export function migrate() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS contact_methods (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      label TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'link',
+      value TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      visible INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS marketplace_connections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      marketplace TEXT NOT NULL UNIQUE,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      app_key TEXT,
+      app_secret_encrypted TEXT,
+      access_token_encrypted TEXT,
+      refresh_token_encrypted TEXT,
+      token_expires_at TEXT,
+      auth_base_url TEXT,
+      token_base_url TEXT,
+      api_base_url TEXT,
+      status TEXT NOT NULL DEFAULT 'setup_required',
+      last_test_at TEXT,
+      last_sync_at TEXT,
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS marketplace_import_batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      marketplace TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      source_query TEXT,
+      selected_count INTEGER NOT NULL DEFAULT 0,
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS marketplace_import_candidates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id INTEGER NOT NULL,
+      marketplace TEXT NOT NULL,
+      external_id TEXT NOT NULL,
+      title TEXT,
+      sku TEXT,
+      image_url TEXT,
+      product_url TEXT,
+      price TEXT,
+      stock_count INTEGER,
+      raw_json TEXT,
+      status TEXT NOT NULL DEFAULT 'new',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (marketplace, external_id, batch_id),
+      FOREIGN KEY (batch_id) REFERENCES marketplace_import_batches(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS product_marketplace_links (
+      product_id INTEGER NOT NULL,
+      marketplace TEXT NOT NULL,
+      external_id TEXT NOT NULL,
+      sync_status TEXT NOT NULL DEFAULT 'linked',
+      last_synced_at TEXT,
+      raw_json TEXT,
+      PRIMARY KEY (product_id, marketplace),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS backup_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      filename TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL DEFAULT 'manual',
+      manifest_json TEXT,
+      size INTEGER NOT NULL DEFAULT 0,
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
   `);
 }
 

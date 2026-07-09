@@ -277,37 +277,14 @@ textarea {
   font-size: 16px;
 }
 
-.support-card {
+.dev-support {
   display: flex;
-  justify-content: space-between;
-  gap: 14px;
+  justify-content: flex-end;
+  gap: 8px;
   align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fbfcfe;
-  padding: 14px;
-  margin-bottom: 18px;
-}
-
-.support-card h2 {
-  margin: 0 0 4px;
-  font-size: 16px;
-}
-
-.support-card p {
-  margin: 0;
+  margin: -4px 0 18px;
   color: var(--muted);
-}
-
-.coffee-link {
-  white-space: nowrap;
-  background: #fff4df;
-  color: #7a4b00;
-  border: 1px solid #f1d19b;
-}
-
-.coffee-link:hover {
-  background: #ffe9ba;
+  font-size: 12px;
 }
 
 .product-row {
@@ -315,6 +292,11 @@ textarea {
   justify-content: space-between;
   gap: 14px;
   align-items: center;
+}
+
+.marketplace-synced {
+  border-color: #a9d6ff;
+  background: #f3f9ff;
 }
 
 .user-row {
@@ -326,10 +308,30 @@ textarea {
 
 .link-result {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: end;
   margin-top: 8px;
+}
+
+.mini-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.compact-list-ui {
+  gap: 8px;
+}
+
+pre {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 10px;
 }
 
 .summary-grid {
@@ -436,17 +438,14 @@ textarea {
 
   .product-row,
   .user-row,
-  .link-result {
+  .link-result,
+  .mini-row {
     grid-template-columns: 1fr;
     align-items: stretch;
   }
 
-  .product-row {
-    flex-direction: column;
-  }
-
-  .support-card {
-    align-items: stretch;
+  .product-row,
+  .mini-row {
     flex-direction: column;
   }
 

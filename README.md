@@ -27,6 +27,7 @@ site/           Astro static website templates
 data/           SQLite database target
 uploads/        Local uploaded files
 generated-site/ Astro build output
+data/backups/   Manual backup ZIP output
 docker-compose.yml
 .env.example
 ```
@@ -114,6 +115,7 @@ Volumes:
 - `kairix-data` stores SQLite.
 - `kairix-uploads` stores local uploaded files.
 - `kairix-generated-site` stores the generated static website.
+- Manual backup ZIPs are written under `data/backups/` inside `kairix-data`.
 
 In production, put the Page Manager admin behind HTTPS using Cloudflare Tunnel, a reverse proxy, or another TLS proxy. Set:
 
@@ -122,17 +124,26 @@ TRUST_PROXY=true
 COOKIE_SECURE=true
 ADMIN_BASE_URL=https://admin.example.com
 PUBLIC_BASE_URL=https://support.example.com
+SESSION_SECRET=use-a-long-random-secret
+ENCRYPTION_SECRET=use-a-different-long-random-secret
 ```
 
 ## Backups
 
-Back up these volumes before upgrades:
+Use Settings -> Import / Export / Backups to create a manual backup ZIP before larger imports or upgrades. Back up these volumes before upgrades:
 
 - SQLite database: `data/kairix.sqlite`
+- Manual backups: `data/backups/`
 - Uploads: `uploads/`
 - Generated site: `generated-site/` if you want a copy of the last build
 
 The generated site can always be rebuilt from the database and uploads.
+
+CSV exports for products, downloads, and Software Bundles are available from the same Settings area.
+
+## Marketplace Integrations
+
+Settings -> Marketplace Integrations includes an AliExpress connection foundation. App secrets and tokens are stored encrypted with `ENCRYPTION_SECRET` and are never exported to the generated public support portal. Configure official AliExpress/Open Platform OAuth and signed API endpoints before attempting to connect or fetch product candidates.
 
 ## Security Notes
 

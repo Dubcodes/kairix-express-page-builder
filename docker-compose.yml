@@ -11,11 +11,17 @@ services:
       DATABASE_PATH: /app/data/kairix.sqlite
       UPLOADS_DIR: /app/uploads
       GENERATED_SITE_DIR: /app/generated-site
+      BACKUPS_DIR: /app/data/backups
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:4321}
       PUBLIC_SITE_BASE_PATH: ${PUBLIC_SITE_BASE_PATH:-/preview}
       ADMIN_BASE_URL: ${ADMIN_BASE_URL:-http://localhost:8080}
+      SESSION_SECRET: ${SESSION_SECRET:-change-this-long-random-secret}
+      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:-change-this-long-random-secret-too}
+      ALIEXPRESS_AUTH_URL: ${ALIEXPRESS_AUTH_URL:-}
+      ALIEXPRESS_TOKEN_URL: ${ALIEXPRESS_TOKEN_URL:-}
+      ALIEXPRESS_API_URL: ${ALIEXPRESS_API_URL:-}
     ports:
       - "8080:8080"
     volumes:

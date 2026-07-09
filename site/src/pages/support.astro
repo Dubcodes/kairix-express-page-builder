@@ -2,6 +2,16 @@
 import PublicLayout from "../layouts/PublicLayout.astro";
 import { content, trackScript } from "../lib/content.js";
 const s = content.settings;
+const contactMethods = s.contactMethods?.length ? s.contactMethods : [
+  s.supportEmail && { label: "Email", type: "email", value: s.supportEmail },
+  s.supportLink && { label: "Support link", type: "link", value: s.supportLink },
+  s.marketplaceUrl && { label: "Marketplace store", type: "marketplace", value: s.marketplaceUrl }
+].filter(Boolean);
+const hrefFor = (method) => method.type === "email"
+  ? `mailto:${method.value}`
+  : method.type === "phone"
+    ? `tel:${method.value}`
+    : method.value;
 ---
 <PublicLayout title="Support">
   <main>
@@ -11,9 +21,12 @@ const s = content.settings;
     </section>
     <section class="section inner">
       <div class="grid">
-        {s.supportEmail && <article class="card"><h2>Email</h2><a href={`mailto:${s.supportEmail}`}>{s.supportEmail}</a></article>}
-        {s.supportLink && <article class="card"><h2>Support link</h2><a href={s.supportLink}>{s.supportLink}</a></article>}
-        {s.marketplaceUrl && <article class="card"><h2>Marketplace store</h2><a href={s.marketplaceUrl}>{s.marketplaceUrl}</a></article>}
+        {contactMethods.map((method) => (
+          <article class="card">
+            <h2>{method.label}</h2>
+            <a href={hrefFor(method)}>{method.value}</a>
+          </article>
+        ))}
       </div>
     </section>
     {s.contactFormEnabled && (

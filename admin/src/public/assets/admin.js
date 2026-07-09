@@ -11,6 +11,10 @@ const state = {
   files: [],
   downloads: [],
   packs: [],
+  contactMethods: [],
+  aliexpress: null,
+  backups: [],
+  csvPreview: null,
   users: [],
   invites: [],
   tab: "dashboard",
@@ -39,8 +43,23 @@ const settingsSections = [
   ["media", "Media Library"],
   ["users", "Users & Invites"],
   ["integrations", "Marketplace Integrations"],
+  ["operations", "Import / Export / Backups"],
   ["advanced", "Advanced"]
 ];
+
+function applyStoredNavigation() {
+  const rawHash = window.location.hash.replace(/^#/, "");
+  const saved = localStorage.getItem("kairixAdminNav") || "";
+  const [tab, section] = (rawHash || saved).split("/");
+  if (tabs.some(([id]) => id === tab)) state.tab = tab;
+  if (settingsSections.some(([id]) => id === section)) state.settingsSection = section;
+}
+
+function saveNavigation() {
+  const hash = state.tab === "settings" ? `${state.tab}/${state.settingsSection}` : state.tab;
+  localStorage.setItem("kairixAdminNav", hash);
+  if (window.location.hash.replace(/^#/, "") !== hash) window.history.replaceState(null, "", `#${hash}`);
+}
 
 async function api(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
@@ -112,6 +131,7 @@ function linkResult(label, url) {
     <div class="link-result">
       <label>${escapeHtml(label)}<input readonly value="${escapeHtml(url)}" onclick="this.select()"></label>
       <a class="action-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open</a>
+      <button class="secondary" type="button" data-copy-value="${escapeHtml(url)}">Copy</button>
     </div>
   `;
 }
@@ -170,13 +190,15 @@ async function refresh() {
 }
 
 async function loadData() {
-  const [settings, categories, products, files, downloads, packs] = await Promise.all([
+  const [settings, categories, products, files, downloads, packs, contactMethods, aliexpress] = await Promise.all([
     api("/api/settings"),
     api("/api/categories"),
     api("/api/products"),
     api("/api/files"),
     api("/api/downloads"),
-    api("/api/software-bundles")
+    api("/api/software-bundles"),
+    api("/api/contact-methods"),
+    api("/api/integrations/aliexpress/status")
   ]);
   state.settings = settings;
   updateAdminTitle(settings);
@@ -185,6 +207,8 @@ async function loadData() {
   state.files = files.files;
   state.downloads = downloads.downloads;
   state.packs = packs.bundles || packs.packs;
+  state.contactMethods = contactMethods.contactMethods || [];
+  state.aliexpress = aliexpress.connection;
 }
 
 function renderSetup() {
@@ -215,6 +239,7 @@ function renderLogin() {
 }
 
 function renderAdmin() {
+  saveNavigation();
   app.innerHTML = `
     <nav class="tabs">${tabs.map(([id, label]) => `<button type="button" data-tab="${id}" class="${state.tab === id ? "active" : ""}">${label}</button>`).join("")}</nav>
     <div id="tabContent"></div>
@@ -222,6 +247,7 @@ function renderAdmin() {
   app.querySelectorAll("[data-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       state.tab = button.dataset.tab;
+      saveNavigation();
       renderAdmin();
     });
   });
@@ -273,24 +299,22 @@ function settingsView() {
     media: filesView,
     users: usersView,
     integrations: integrationsView,
+    operations: operationsView,
     advanced: advancedSettingsView
   }[state.settingsSection] || brandingSettingsView;
   return `
     <nav class="subtabs">${settingsSections.map(([id, label]) => `<button type="button" data-settings-section="${id}" class="${state.settingsSection === id ? "active" : ""}">${label}</button>`).join("")}</nav>
     ${active()}
-    ${developerSupportCard()}
+    ${developerSupportLink()}
   `;
 }
 
-function developerSupportCard() {
+function developerSupportLink() {
   return `
-    <section class="support-card">
-      <div>
-        <h2>Support this tool</h2>
-        <p>If this page manager helps your business, you can support the developer here.</p>
-      </div>
-      <a class="action-link coffee-link" href="https://buymeacoffee.com/dubcodes" target="_blank" rel="noopener noreferrer">☕ Buy me a coffee</a>
-    </section>
+    <div class="dev-support">
+      <span>Support this tool</span>
+      <a class="coffee-icon-link" href="https://buymeacoffee.com/dubcodes" target="_blank" rel="noopener noreferrer" title="Buy me a coffee" aria-label="Buy me a coffee">☕</a>
+    </div>
   `;
 }
 
@@ -332,6 +356,25 @@ function supportSettingsView() {
         <label class="check-row"><input name="contactFormEnabled" type="checkbox" ${s.contactFormEnabled === "on" || s.contactFormEnabled === "true" ? "checked" : ""}> Enable public contact form</label>
         <button type="submit">Save support info</button>
       </form>
+      <div class="item">
+        <h3>Public contact rows</h3>
+        <p class="muted">Add the seller-facing support options that should appear on the public support portal.</p>
+        <form id="contactMethodForm" class="form-grid">
+          <label>Label<input name="label" placeholder="WhatsApp support" required></label>
+          <label>Type<select name="type"><option value="link">Link</option><option value="email">Email</option><option value="phone">Phone</option><option value="marketplace">Marketplace</option></select></label>
+          <label class="wide">Value<input name="value" placeholder="https:// or email/phone" required></label>
+          <label>Sort order<input name="sortOrder" type="number" value="0"></label>
+          <button type="submit">Add contact row</button>
+        </form>
+        <div class="list compact-list-ui">
+          ${state.contactMethods.map((method) => `
+            <div class="item mini-row">
+              <div><strong>${escapeHtml(method.label)}</strong> <span class="pill">${escapeHtml(method.type)}</span><p class="muted">${escapeHtml(method.value)}</p></div>
+              <button class="secondary" type="button" data-delete-contact-method="${method.id}">Hide</button>
+            </div>
+          `).join("") || "<p class='muted'>No extra contact rows yet. Email/link/store fallback still works.</p>"}
+        </div>
+      </div>
       <div id="contactSubmissions" class="list"></div>
     </section>
   `;
@@ -466,13 +509,13 @@ function productsView() {
         <input id="productSearch" placeholder="Search products by name, SKU, or category" value="${escapeHtml(state.productSearch)}">
       </div>
       <div class="list">${products.map((product) => `
-        <div class="item product-row">
+        <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""}">
           <div>
-            <h3>${escapeHtml(product.name)} <span class="pill">${escapeHtml(product.publish_state || product.status)}</span></h3>
+            <h3>${escapeHtml(product.name)} <span class="pill">${escapeHtml(product.publish_state || product.status)}</span>${product.import_sync_status ? ` <span class="pill">AliExpress ${escapeHtml(product.import_sync_status)}</span>` : ""}</h3>
             <p>${escapeHtml(product.short_description || "")}</p>
-            <p class="muted">${escapeHtml(product.category_name || "No category")} ${product.sku ? `- ${escapeHtml(product.sku)}` : ""} - ${escapeHtml(stockLabel(product))}</p>
+            <p class="muted">${escapeHtml(product.category_name || "No category")} ${product.sku ? `- ${escapeHtml(product.sku)}` : ""} - ${escapeHtml(stockLabel(product))}${product.last_imported_at ? ` - Synced ${escapeHtml(product.last_imported_at)}` : ""}</p>
           </div>
-          <div class="actions"><button type="button" data-edit-product="${product.id}">Edit</button><button class="secondary" type="button" data-duplicate-product="${product.id}">Duplicate</button></div>
+          <div class="actions"><button type="button" data-edit-product="${product.id}">Edit</button><button class="secondary" type="button" data-duplicate-product="${product.id}">Duplicate</button>${product.import_sync_status ? `<button class="secondary" type="button" data-detach-aliexpress="${product.id}">Detach</button>` : ""}</div>
         </div>`).join("")}</div>
     </section>
     <section class="panel ${state.showProductForm ? "" : "hidden"}" id="productEditor">
@@ -535,17 +578,96 @@ function analyticsView() {
 }
 
 function integrationsView() {
+  const connection = state.aliexpress || {};
+  const status = connection.status || "setup_required";
   return `
     <section class="panel">
       <h2>Marketplace integrations</h2>
-      <p class="muted">Placeholders for future import flows. API credentials are intentionally not required in v1.</p>
+      <p class="muted">Connect marketplace catalog data to create draft product records. Imports never overwrite edited product content without an explicit action.</p>
       <div class="list">
-        ${["AliExpress", "Alibaba", "eBay", "Amazon", "Shopify"].map((name) => `
-          <div class="item"><h3>${name}</h3><p>Select marketplace, enter API token, choose listings to import, then clean generated content. Future imports will never overwrite edited content without confirmation.</p><span class="pill">Placeholder</span></div>
-        `).join("")}
+        <div class="item">
+          <div class="section-heading">
+            <h3>AliExpress</h3>
+            <span class="pill">${escapeHtml(status)}</span>
+          </div>
+          <p class="muted">Credentials stay in the Page Manager database and are not exported to the public site. Configure official Open Platform endpoints before connecting.</p>
+          <form id="aliexpressSettingsForm" class="form-grid">
+            <label class="check-row"><input name="enabled" type="checkbox" ${connection.enabled ? "checked" : ""}> Enable AliExpress sync</label>
+            <label>App key / client ID<input name="appKey" value="${escapeHtml(connection.app_key || "")}"></label>
+            <label>App secret<input name="appSecret" type="password" placeholder="${connection.hasSecret ? "Saved - leave blank to keep" : ""}"></label>
+            <label class="wide">Redirect URI<input readonly value="${escapeHtml(connection.redirectUri || "")}" onclick="this.select()"></label>
+            <label>Auth URL<input name="authBaseUrl" value="${escapeHtml(connection.auth_base_url || "")}" placeholder="Official OAuth authorize endpoint"></label>
+            <label>Token URL<input name="tokenBaseUrl" value="${escapeHtml(connection.token_base_url || "")}" placeholder="Official OAuth token endpoint"></label>
+            <label class="wide">API URL<input name="apiBaseUrl" value="${escapeHtml(connection.api_base_url || "")}" placeholder="Official signed API endpoint"></label>
+            <button type="submit">Save AliExpress settings</button>
+          </form>
+          <div class="actions">
+            <button id="aliexpressConnectBtn" type="button">Connect</button>
+            <button id="aliexpressTestBtn" class="secondary" type="button">Test connection</button>
+            <button id="aliexpressFetchBtn" class="secondary" type="button">Fetch product candidates</button>
+            <button id="aliexpressDisconnectBtn" class="danger" type="button">Disconnect</button>
+          </div>
+          <p class="muted">Last test: ${escapeHtml(connection.last_test_at || "Never")} · Last sync: ${escapeHtml(connection.last_sync_at || "Never")}</p>
+          <div id="aliexpressOutput" class="list"></div>
+        </div>
       </div>
     </section>
   `;
+}
+
+function operationsView() {
+  return `
+    <section class="panel">
+      <h2>Import / Export / Backups</h2>
+      <p class="muted">Use exports and backups before larger data changes. Manual backups include a manifest, settings snapshot and SQLite database copy.</p>
+      <div class="grid-two">
+        <div class="item">
+          <h3>CSV exports</h3>
+          <p class="muted">Download current admin data for review or spreadsheet editing.</p>
+          <div class="actions">
+            <a class="action-link" href="/api/import-export/csv/products">Products CSV</a>
+            <a class="action-link" href="/api/import-export/csv/downloads">Downloads CSV</a>
+            <a class="action-link" href="/api/import-export/csv/bundles">Bundles CSV</a>
+          </div>
+        </div>
+        <div class="item">
+          <h3>CSV preview</h3>
+          <p class="muted">Paste a product CSV to validate the first rows before a future import/update run.</p>
+          <form id="csvPreviewForm" class="form-grid">
+            <label class="wide">CSV text<textarea name="csvText" placeholder="name,sku,stock_count"></textarea></label>
+            <button type="submit">Preview CSV</button>
+          </form>
+          <div id="csvPreviewOutput"></div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="section-heading">
+          <h3>Backups</h3>
+          <button id="createBackupBtn" type="button">Create backup</button>
+        </div>
+        <div class="actions">
+          <button id="loadBackupsBtn" class="secondary" type="button">Refresh backups</button>
+        </div>
+        <div id="backupOutput" class="list">${renderBackups()}</div>
+      </div>
+    </section>
+  `;
+}
+
+function renderBackups() {
+  if (!state.backups.length) return "<p class='muted'>No backups loaded yet.</p>";
+  return state.backups.map((backup) => `
+    <div class="item mini-row">
+      <div>
+        <h3>${escapeHtml(backup.filename)}</h3>
+        <p class="muted">${Math.round(Number(backup.size || 0) / 1024)} KB · ${escapeHtml(backup.created_at || "")}</p>
+      </div>
+      <div class="actions">
+        <button class="secondary" type="button" data-inspect-backup="${escapeHtml(backup.filename)}">Inspect</button>
+        <a class="action-link" href="/api/backups/${encodeURIComponent(backup.filename)}/download">Download</a>
+      </div>
+    </div>
+  `).join("");
 }
 
 function usersView() {
@@ -648,6 +770,42 @@ async function loadUsersAndInvites() {
   bindUserActionButtons();
 }
 
+async function loadBackups() {
+  const data = await api("/api/backups");
+  state.backups = data.backups || [];
+  const output = document.querySelector("#backupOutput");
+  if (output) output.innerHTML = renderBackups();
+}
+
+function renderCsvPreview(preview) {
+  if (!preview) return "";
+  return `
+    <div class="item">
+      <h3>${preview.validRows} valid row(s) of ${preview.totalRows}</h3>
+      ${(preview.rows || []).length ? `<table class="data-table"><tbody>${preview.rows.slice(0, 8).map((row) => `
+        <tr><td>Row ${row.rowNumber}</td><td>${row.valid ? "Ready" : "Needs review"}</td><td>${escapeHtml(Object.values(row.values || {}).slice(0, 3).join(" · "))}</td></tr>
+      `).join("")}</tbody></table>` : "<p class='muted'>No rows found.</p>"}
+    </div>
+  `;
+}
+
+function renderAliExpressCandidates(candidates) {
+  if (!candidates.length) return "<p class='muted'>No candidates found.</p>";
+  return `
+    <form id="aliexpressImportForm" class="form-grid">
+      <div class="wide list">
+        ${candidates.map((candidate) => `
+          <label class="check-row item">
+            <input name="candidateIds" type="checkbox" value="${candidate.id || candidate.externalId}">
+            <span><strong>${escapeHtml(candidate.title || "Untitled product")}</strong><br><span class="muted">${escapeHtml(candidate.external_id || candidate.externalId || "")} ${candidate.price ? `· ${escapeHtml(candidate.price)}` : ""}</span></span>
+          </label>
+        `).join("")}
+      </div>
+      <button type="submit">Import selected as draft products</button>
+    </form>
+  `;
+}
+
 function bindUserActionButtons() {
   document.querySelectorAll("[data-approve-user]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -746,6 +904,122 @@ function bindTabEvents(content) {
     if (element) element.addEventListener("click", () => handler().catch((error) => setStatus(error.message, true)));
   }
 
+  content.querySelectorAll("[data-copy-value]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(button.dataset.copyValue || "");
+      setStatus("Link copied.");
+    });
+  });
+
+  const contactMethodForm = content.querySelector("#contactMethodForm");
+  if (contactMethodForm) contactMethodForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = formValues(contactMethodForm);
+    values.sortOrder = Number(values.sortOrder || 0);
+    await api("/api/contact-methods", { method: "POST", body: values });
+    await loadData();
+    renderAdmin();
+    setStatus("Contact row added.");
+  });
+
+  content.querySelectorAll("[data-delete-contact-method]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/contact-methods/${button.dataset.deleteContactMethod}`, { method: "DELETE", body: {} });
+      await loadData();
+      renderAdmin();
+      setStatus("Contact row hidden.");
+    });
+  });
+
+  const aliexpressSettingsForm = content.querySelector("#aliexpressSettingsForm");
+  if (aliexpressSettingsForm) aliexpressSettingsForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = formValues(aliexpressSettingsForm);
+    values.enabled = Boolean(aliexpressSettingsForm.querySelector("[name='enabled']").checked);
+    await api("/api/integrations/aliexpress/settings", { method: "PUT", body: values });
+    const status = await api("/api/integrations/aliexpress/status");
+    state.aliexpress = status.connection;
+    renderAdmin();
+    setStatus("AliExpress settings saved.");
+  });
+
+  const aliexpressConnectBtn = content.querySelector("#aliexpressConnectBtn");
+  if (aliexpressConnectBtn) aliexpressConnectBtn.addEventListener("click", async () => {
+    const result = await api("/api/integrations/aliexpress/connect", { method: "POST", body: {} });
+    const output = document.querySelector("#aliexpressOutput");
+    if (output) output.innerHTML = linkResult("AliExpress authorization URL", result.authUrl);
+    output?.querySelectorAll("[data-copy-value]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(button.dataset.copyValue || "");
+        setStatus("Link copied.");
+      });
+    });
+  });
+
+  const aliexpressTestBtn = content.querySelector("#aliexpressTestBtn");
+  if (aliexpressTestBtn) aliexpressTestBtn.addEventListener("click", async () => {
+    await api("/api/integrations/aliexpress/test", { method: "POST", body: {} });
+    const status = await api("/api/integrations/aliexpress/status");
+    state.aliexpress = status.connection;
+    renderAdmin();
+    setStatus("AliExpress connection tested.");
+  });
+
+  const aliexpressDisconnectBtn = content.querySelector("#aliexpressDisconnectBtn");
+  if (aliexpressDisconnectBtn) aliexpressDisconnectBtn.addEventListener("click", async () => {
+    const result = await api("/api/integrations/aliexpress/disconnect", { method: "POST", body: {} });
+    state.aliexpress = result.connection;
+    renderAdmin();
+    setStatus("AliExpress disconnected.");
+  });
+
+  const aliexpressFetchBtn = content.querySelector("#aliexpressFetchBtn");
+  if (aliexpressFetchBtn) aliexpressFetchBtn.addEventListener("click", async () => {
+    const output = document.querySelector("#aliexpressOutput");
+    const result = await api("/api/integrations/aliexpress/fetch-products", { method: "POST", body: {} });
+    if (output) output.innerHTML = renderAliExpressCandidates(result.candidates || []);
+  });
+
+  const aliexpressOutput = content.querySelector("#aliexpressOutput");
+  if (aliexpressOutput) aliexpressOutput.addEventListener("submit", async (event) => {
+    if (event.target.id !== "aliexpressImportForm") return;
+    event.preventDefault();
+    const candidateIds = checkedNumbers(event.target, "candidateIds");
+    if (!candidateIds.length) return setStatus("Select at least one candidate.", true);
+    await api("/api/integrations/aliexpress/import", { method: "POST", body: { candidateIds } });
+    await loadData();
+    renderAdmin();
+    setStatus("AliExpress candidates imported as draft products.");
+  });
+
+  const csvPreviewForm = content.querySelector("#csvPreviewForm");
+  if (csvPreviewForm) csvPreviewForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    state.csvPreview = await api("/api/import-export/csv/preview", { method: "POST", body: formValues(csvPreviewForm) });
+    const output = document.querySelector("#csvPreviewOutput");
+    if (output) output.innerHTML = renderCsvPreview(state.csvPreview);
+  });
+
+  const createBackupBtn = content.querySelector("#createBackupBtn");
+  if (createBackupBtn) createBackupBtn.addEventListener("click", async () => {
+    await api("/api/backups", { method: "POST", body: {} });
+    await loadBackups();
+    setStatus("Backup created.");
+  });
+
+  const loadBackupsBtn = content.querySelector("#loadBackupsBtn");
+  if (loadBackupsBtn) loadBackupsBtn.addEventListener("click", () => loadBackups().catch((error) => setStatus(error.message, true)));
+
+  content.querySelectorAll("[data-inspect-backup]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const data = await api(`/api/backups/${encodeURIComponent(button.dataset.inspectBackup)}/inspect`);
+      const output = document.querySelector("#backupOutput");
+      if (output) output.insertAdjacentHTML("afterbegin", `<div class="item"><h3>Backup manifest</h3><pre>${escapeHtml(JSON.stringify(data.backup.manifest || {}, null, 2))}</pre></div>`);
+    });
+  });
+
+  if (content.querySelector("#backupOutput")) loadBackups().catch((error) => setStatus(error.message, true));
+
   const settingsForm = content.querySelector("#settingsForm");
   if (settingsForm) settingsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -781,6 +1055,7 @@ function bindTabEvents(content) {
   content.querySelectorAll("[data-settings-section]").forEach((button) => {
     button.addEventListener("click", () => {
       state.settingsSection = button.dataset.settingsSection;
+      saveNavigation();
       renderAdmin();
     });
   });
@@ -826,6 +1101,15 @@ function bindTabEvents(content) {
       await loadData();
       renderAdmin();
       setStatus("Product duplicated.");
+    });
+  });
+
+  content.querySelectorAll("[data-detach-aliexpress]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/integrations/aliexpress/detach-product/${button.dataset.detachAliexpress}`, { method: "POST", body: {} });
+      await loadData();
+      renderAdmin();
+      setStatus("AliExpress link detached.");
     });
   });
 
@@ -953,6 +1237,7 @@ logoutBtn.addEventListener("click", async () => {
   await refresh();
 });
 
+applyStoredNavigation();
 refresh().catch((error) => {
   app.innerHTML = `<section class="panel"><h2>Unable to start admin UI</h2><p class="error">${escapeHtml(error.message)}</p></section>`;
 });

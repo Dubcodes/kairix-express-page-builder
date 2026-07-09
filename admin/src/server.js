@@ -29,6 +29,10 @@ import {
 } from "./middleware/auth.js";
 import { storageProvider } from "./providers/storage.js";
 import { publishSite } from "./services/publish.js";
+import { encryptSecret, decryptSecret } from "./services/cryptoBox.js";
+import { buildAuthUrl, exchangeCodeForToken, fetchProductList, normalizeAliExpressProduct, testConnection } from "./services/aliexpress.js";
+import { createBackup, inspectBackup, listBackups } from "./services/backups.js";
+import { parseCsv, toCsv } from "./services/csv.js";
 
 const app = express();
 await storageProvider.ensureReady();
@@ -182,6 +186,109 @@ function fileRecord(row) {
   };
 }
 
+function redirectUri() {
+  return `${config.adminBaseUrl.replace(/\/$/, "")}/api/integrations/aliexpress/callback`;
+}
+
+function getMarketplaceConnection(marketplace = "aliexpress", { includeSecrets = false } = {}) {
+  const row = db.prepare("SELECT * FROM marketplace_connections WHERE marketplace = ?").get(marketplace);
+  const base = row || {
+    marketplace,
+    enabled: 0,
+    app_key: "",
+    app_secret_encrypted: "",
+    access_token_encrypted: "",
+    refresh_token_encrypted: "",
+    auth_base_url: config.aliexpressAuthUrl,
+    token_base_url: config.aliexpressTokenUrl,
+    api_base_url: config.aliexpressApiUrl,
+    status: "setup_required",
+    last_test_at: null,
+    last_sync_at: null,
+    metadata: "{}"
+  };
+  const connection = {
+    ...base,
+    hasSecret: Boolean(base.app_secret_encrypted),
+    hasToken: Boolean(base.access_token_encrypted),
+    redirectUri: redirectUri()
+  };
+  if (includeSecrets) {
+    connection.app_secret = decryptSecret(base.app_secret_encrypted);
+    connection.access_token = decryptSecret(base.access_token_encrypted);
+    connection.refresh_token = decryptSecret(base.refresh_token_encrypted);
+  }
+  delete connection.app_secret_encrypted;
+  delete connection.access_token_encrypted;
+  delete connection.refresh_token_encrypted;
+  return connection;
+}
+
+function saveMarketplaceConnection(input) {
+  const current = db.prepare("SELECT * FROM marketplace_connections WHERE marketplace = 'aliexpress'").get();
+  const secret = Object.hasOwn(input, "appSecret") && input.appSecret
+    ? encryptSecret(input.appSecret)
+    : current?.app_secret_encrypted || "";
+  const enabled = input.enabled ? 1 : 0;
+  const appKey = cleanText(input.appKey);
+  const authBaseUrl = cleanText(input.authBaseUrl || current?.auth_base_url || config.aliexpressAuthUrl);
+  const tokenBaseUrl = cleanText(input.tokenBaseUrl || current?.token_base_url || config.aliexpressTokenUrl);
+  const apiBaseUrl = cleanText(input.apiBaseUrl || current?.api_base_url || config.aliexpressApiUrl);
+  const status = enabled && appKey && secret ? "credentials_saved" : "setup_required";
+  db.prepare(`
+    INSERT INTO marketplace_connections
+      (marketplace, enabled, app_key, app_secret_encrypted, auth_base_url, token_base_url, api_base_url, status, updated_at)
+    VALUES ('aliexpress', ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(marketplace) DO UPDATE SET
+      enabled = excluded.enabled,
+      app_key = excluded.app_key,
+      app_secret_encrypted = excluded.app_secret_encrypted,
+      auth_base_url = excluded.auth_base_url,
+      token_base_url = excluded.token_base_url,
+      api_base_url = excluded.api_base_url,
+      status = excluded.status,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(enabled, appKey, secret, authBaseUrl, tokenBaseUrl, apiBaseUrl, status);
+  return getMarketplaceConnection("aliexpress");
+}
+
+function contactMethodRows() {
+  return db.prepare("SELECT * FROM contact_methods WHERE visible = 1 ORDER BY sort_order, id").all();
+}
+
+function csvProducts() {
+  return db.prepare(`
+    SELECT p.id, p.name, p.slug, p.sku, c.name AS category, p.marketplace_url, p.status, p.publish_state,
+      p.stock_tracking, p.stock_count, p.stock_low_threshold, p.stock_display_mode, p.stock_source, p.short_description
+    FROM products p
+    LEFT JOIN categories c ON c.id = p.category_id
+    WHERE p.archived = 0
+    ORDER BY p.sort_order, p.name
+  `).all();
+}
+
+function csvDownloads() {
+  return db.prepare(`
+    SELECT d.id, d.name, d.slug, d.type, d.short_description, d.external_url, COUNT(v.id) AS version_count
+    FROM download_objects d
+    LEFT JOIN download_versions v ON v.download_id = d.id
+    WHERE d.archived = 0
+    GROUP BY d.id
+    ORDER BY d.sort_order, d.type, d.name
+  `).all();
+}
+
+function csvBundles() {
+  return db.prepare(`
+    SELECT sp.id, sp.name, sp.slug, sp.description, sp.auto_generate_zip, COUNT(spd.download_id) AS download_count
+    FROM support_packs sp
+    LEFT JOIN support_pack_downloads spd ON spd.support_pack_id = sp.id
+    WHERE sp.archived = 0
+    GROUP BY sp.id
+    ORDER BY sp.sort_order, sp.name
+  `).all();
+}
+
 function requireSetupOpen(req, res, next) {
   if (userCount() > 0) return res.status(403).json({ error: "First-run setup has already been completed" });
   next();
@@ -308,6 +415,220 @@ app.put("/api/settings", requirePermission("write"), upload.single("logo"), (req
     setSetting("logoFileId", String(result.lastInsertRowid));
   }
   res.json({ ok: true, settings: getSettings() });
+});
+
+app.get("/api/contact-methods", requireAuth, (_req, res) => {
+  res.json({ contactMethods: contactMethodRows() });
+});
+
+app.post("/api/contact-methods", requirePermission("write"), (req, res) => {
+  const body = z.object({
+    label: z.string().min(1).max(80),
+    type: z.enum(["email", "link", "phone", "marketplace"]).default("link"),
+    value: z.string().min(1).max(500),
+    sortOrder: z.number().optional()
+  }).parse(req.body);
+  const result = db.prepare("INSERT INTO contact_methods (label, type, value, sort_order) VALUES (?, ?, ?, ?)")
+    .run(cleanText(body.label), body.type, cleanText(body.value), body.sortOrder || 0);
+  audit(req, "contact_method_create", { entityType: "contact_method", entityId: result.lastInsertRowid, message: `Created contact method ${body.label}` });
+  res.json({ contactMethod: db.prepare("SELECT * FROM contact_methods WHERE id = ?").get(result.lastInsertRowid) });
+});
+
+app.delete("/api/contact-methods/:id", requirePermission("write"), (req, res) => {
+  db.prepare("UPDATE contact_methods SET visible = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+  audit(req, "contact_method_hide", { entityType: "contact_method", entityId: Number(req.params.id), message: "Contact method hidden" });
+  res.json({ ok: true });
+});
+
+app.get("/api/import-export/csv/:type", requirePermission("read"), (req, res) => {
+  const rows = {
+    products: csvProducts,
+    downloads: csvDownloads,
+    bundles: csvBundles
+  }[req.params.type]?.();
+  if (!rows) return res.status(404).json({ error: "Unknown CSV export type" });
+  res.type("text/csv");
+  res.setHeader("Content-Disposition", `attachment; filename="kairix-${req.params.type}.csv"`);
+  res.send(toCsv(rows));
+});
+
+app.post("/api/import-export/csv/preview", requirePermission("write"), (req, res) => {
+  const body = z.object({ csvText: z.string().min(1).max(1024 * 1024) }).parse(req.body);
+  const rows = parseCsv(body.csvText);
+  res.json({
+    rows: rows.slice(0, 100),
+    totalRows: rows.length,
+    validRows: rows.filter((row) => row.valid).length
+  });
+});
+
+app.get("/api/backups", requirePermission("write"), (_req, res) => {
+  res.json({ backups: listBackups() });
+});
+
+app.post("/api/backups", requirePermission("write"), asyncRoute(async (req, res) => {
+  const backup = await createBackup({ kind: "manual", createdBy: req.user.id });
+  audit(req, "backup_create", { entityType: "backup", message: `Created backup ${backup.filename}`, metadata: { size: backup.size } });
+  res.json({ backup: { filename: backup.filename, size: backup.size, manifest: backup.manifest } });
+}));
+
+app.get("/api/backups/:filename/inspect", requirePermission("write"), asyncRoute(async (req, res) => {
+  res.json({ backup: await inspectBackup(req.params.filename) });
+}));
+
+app.get("/api/backups/:filename/download", requirePermission("write"), (req, res) => {
+  const filename = path.basename(req.params.filename);
+  const filepath = path.join(config.backupsDir, filename);
+  if (!fs.existsSync(filepath)) return res.status(404).json({ error: "Backup not found" });
+  res.download(filepath, filename);
+});
+
+app.get("/api/integrations/aliexpress/status", requireAuth, (_req, res) => {
+  res.json({ connection: getMarketplaceConnection("aliexpress") });
+});
+
+app.put("/api/integrations/aliexpress/settings", requirePermission("write"), (req, res) => {
+  const body = z.object({
+    enabled: z.boolean().optional(),
+    appKey: z.string().optional(),
+    appSecret: z.string().optional(),
+    authBaseUrl: z.string().optional(),
+    tokenBaseUrl: z.string().optional(),
+    apiBaseUrl: z.string().optional()
+  }).parse(req.body);
+  const connection = saveMarketplaceConnection(body);
+  audit(req, "aliexpress_settings_save", { entityType: "marketplace_connection", message: "AliExpress settings saved" });
+  res.json({ connection });
+});
+
+app.post("/api/integrations/aliexpress/connect", requirePermission("write"), (req, res) => {
+  try {
+    const token = createOneTimeToken();
+    const connection = getMarketplaceConnection("aliexpress", { includeSecrets: true });
+    const authUrl = buildAuthUrl(connection, token.raw);
+    db.prepare("UPDATE marketplace_connections SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE marketplace = 'aliexpress'")
+      .run(JSON.stringify({ oauthStateHash: token.hash, startedAt: new Date().toISOString() }));
+    res.json({ authUrl, redirectUri: redirectUri() });
+  } catch (error) {
+    res.status(error.code === "setup_required" ? 400 : 500).json({ error: error.message, code: error.code || "aliexpress_connect_failed" });
+  }
+});
+
+app.get("/api/integrations/aliexpress/callback", asyncRoute(async (req, res) => {
+  const code = cleanText(req.query.code);
+  const state = cleanText(req.query.state);
+  const row = db.prepare("SELECT * FROM marketplace_connections WHERE marketplace = 'aliexpress'").get();
+  const metadata = row?.metadata ? JSON.parse(row.metadata) : {};
+  if (!row || !metadata.oauthStateHash || hashInviteToken(state) !== metadata.oauthStateHash) return res.status(400).send("Invalid AliExpress callback state");
+  const tokens = await exchangeCodeForToken(getMarketplaceConnection("aliexpress", { includeSecrets: true }), code);
+  db.prepare(`
+    UPDATE marketplace_connections SET
+      access_token_encrypted = ?, refresh_token_encrypted = ?, token_expires_at = ?, status = 'connected', updated_at = CURRENT_TIMESTAMP
+    WHERE marketplace = 'aliexpress'
+  `).run(
+    encryptSecret(tokens.access_token || tokens.accessToken || ""),
+    encryptSecret(tokens.refresh_token || tokens.refreshToken || ""),
+    tokens.expires_at || tokens.expiresAt || null
+  );
+  res.redirect("/#settings/integrations");
+}));
+
+app.post("/api/integrations/aliexpress/disconnect", requirePermission("write"), (req, res) => {
+  db.prepare(`
+    UPDATE marketplace_connections SET access_token_encrypted = '', refresh_token_encrypted = '', token_expires_at = NULL,
+      status = 'disconnected', last_test_at = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE marketplace = 'aliexpress'
+  `).run();
+  audit(req, "aliexpress_disconnect", { entityType: "marketplace_connection", message: "AliExpress disconnected" });
+  res.json({ connection: getMarketplaceConnection("aliexpress") });
+});
+
+app.post("/api/integrations/aliexpress/test", requirePermission("write"), asyncRoute(async (_req, res) => {
+  try {
+    await testConnection(getMarketplaceConnection("aliexpress", { includeSecrets: true }));
+    db.prepare("UPDATE marketplace_connections SET status = 'connected', last_test_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE marketplace = 'aliexpress'").run();
+    res.json({ ok: true, connection: getMarketplaceConnection("aliexpress") });
+  } catch (error) {
+    db.prepare("UPDATE marketplace_connections SET status = ?, last_test_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE marketplace = 'aliexpress'")
+      .run(error.code === "setup_required" ? "setup_required" : "error");
+    res.status(error.code === "setup_required" ? 400 : 502).json({ error: error.message, code: error.code || "aliexpress_test_failed" });
+  }
+}));
+
+app.post("/api/integrations/aliexpress/fetch-products", requirePermission("write"), asyncRoute(async (req, res) => {
+  try {
+    const result = await fetchProductList(getMarketplaceConnection("aliexpress", { includeSecrets: true }), req.body || {});
+    const rawItems = result.products || result.items || result.result?.products || result.result?.items || [];
+    const candidates = rawItems.map(normalizeAliExpressProduct).filter((item) => item.externalId);
+    const batchId = db.prepare("INSERT INTO marketplace_import_batches (marketplace, status, source_query, selected_count, created_by) VALUES ('aliexpress', 'fetched', ?, ?, ?)")
+      .run(JSON.stringify(req.body || {}), candidates.length, req.user.id).lastInsertRowid;
+    const insert = db.prepare(`
+      INSERT OR IGNORE INTO marketplace_import_candidates
+      (batch_id, marketplace, external_id, title, sku, image_url, product_url, price, stock_count, raw_json)
+      VALUES (?, 'aliexpress', ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    candidates.forEach((item) => insert.run(batchId, item.externalId, item.title, item.sku, item.imageUrl, item.productUrl, String(item.price || ""), item.stockCount, JSON.stringify(item.raw)));
+    res.json({ batchId, candidates });
+  } catch (error) {
+    res.status(error.code === "setup_required" ? 400 : 502).json({ error: error.message, code: error.code || "aliexpress_fetch_failed" });
+  }
+}));
+
+app.get("/api/integrations/aliexpress/import-candidates", requirePermission("write"), (_req, res) => {
+  const candidates = db.prepare("SELECT * FROM marketplace_import_candidates WHERE marketplace = 'aliexpress' ORDER BY created_at DESC LIMIT 100").all();
+  res.json({ candidates });
+});
+
+app.post("/api/integrations/aliexpress/import", requirePermission("write"), (req, res) => {
+  const body = z.object({ candidateIds: z.array(z.number()).min(1) }).parse(req.body);
+  const tx = db.transaction(() => {
+    const imported = [];
+    for (const candidateId of body.candidateIds) {
+      const candidate = db.prepare("SELECT * FROM marketplace_import_candidates WHERE id = ? AND marketplace = 'aliexpress'").get(candidateId);
+      if (!candidate) continue;
+      const existingLink = db.prepare("SELECT product_id FROM product_marketplace_links WHERE marketplace = 'aliexpress' AND external_id = ?").get(candidate.external_id);
+      if (existingLink) {
+        db.prepare("UPDATE marketplace_import_candidates SET status = 'linked', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(candidate.id);
+        continue;
+      }
+      const name = cleanText(candidate.title || `AliExpress product ${candidate.external_id}`);
+      const slug = makeSlug(name, "products");
+      const productId = db.prepare(`
+        INSERT INTO products
+        (name, slug, sku, marketplace_url, short_description, status, publish_state, stock_tracking, stock_count, stock_source,
+          marketplace_name, marketplace_listing_id, imported_title, imported_image_urls, import_sync_status, last_imported_at)
+        VALUES (?, ?, ?, ?, ?, 'draft', 'draft', ?, ?, 'marketplace', 'AliExpress', ?, ?, ?, 'imported', CURRENT_TIMESTAMP)
+      `).run(
+        name,
+        slug,
+        cleanText(candidate.sku),
+        cleanText(candidate.product_url),
+        cleanText(candidate.title),
+        candidate.stock_count === null || candidate.stock_count === undefined ? 0 : 1,
+        candidate.stock_count,
+        cleanText(candidate.external_id),
+        name,
+        candidate.image_url ? JSON.stringify([candidate.image_url]) : "[]"
+      ).lastInsertRowid;
+      db.prepare(`
+        INSERT INTO product_marketplace_links (product_id, marketplace, external_id, sync_status, last_synced_at, raw_json)
+        VALUES (?, 'aliexpress', ?, 'imported', CURRENT_TIMESTAMP, ?)
+      `).run(productId, candidate.external_id, candidate.raw_json || "{}");
+      db.prepare("UPDATE marketplace_import_candidates SET status = 'imported', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(candidate.id);
+      imported.push(productId);
+    }
+    return imported;
+  });
+  const imported = tx();
+  audit(req, "aliexpress_import", { entityType: "marketplace_import", message: `Imported ${imported.length} AliExpress candidate(s)`, metadata: { productIds: imported } });
+  res.json({ importedProductIds: imported });
+});
+
+app.post("/api/integrations/aliexpress/detach-product/:id", requirePermission("write"), (req, res) => {
+  db.prepare("DELETE FROM product_marketplace_links WHERE product_id = ? AND marketplace = 'aliexpress'").run(req.params.id);
+  db.prepare("UPDATE products SET import_sync_status = NULL, last_imported_at = NULL, stock_source = 'manual' WHERE id = ?").run(req.params.id);
+  audit(req, "aliexpress_product_detach", { entityType: "product", entityId: Number(req.params.id), message: "Detached AliExpress link" });
+  res.json({ ok: true });
 });
 
 app.post("/api/files/upload", requirePermission("files"), upload.array("files", 12), (req, res) => {
@@ -751,13 +1072,15 @@ app.post("/api/password-reset/complete", acceptLimiter, asyncRoute(async (req, r
 }));
 
 app.get("/api/analytics", requirePermission("analytics"), (req, res) => {
-  const range = req.query.range === "7d" ? "7 days" : req.query.range === "30d" ? "30 days" : null;
-  const where = range ? "WHERE created_at >= datetime('now', ?)" : "";
-  const args = range ? [`-${range}`] : [];
-  const totals = db.prepare(`SELECT event_type, COUNT(*) AS count FROM analytics_events ${where} GROUP BY event_type`).all(...args);
-  const topPages = db.prepare(`SELECT path, COUNT(*) AS count FROM analytics_events ${where} GROUP BY path ORDER BY count DESC LIMIT 10`).all(...args);
+  const range = ["7d", "30d", "all"].includes(String(req.query.range || "")) ? req.query.range : "7d";
+  const modifier = range === "7d" ? "-7 days" : range === "30d" ? "-30 days" : null;
+  const where = modifier ? "WHERE ae.created_at >= datetime('now', ?)" : "";
+  const tableWhere = modifier ? "WHERE created_at >= datetime('now', ?)" : "";
+  const args = modifier ? [modifier] : [];
+  const totals = db.prepare(`SELECT COALESCE(event_type, 'unknown') AS event_type, COUNT(*) AS count FROM analytics_events ${tableWhere} GROUP BY event_type`).all(...args);
+  const topPages = db.prepare(`SELECT COALESCE(NULLIF(path, ''), 'Unknown') AS path, COUNT(*) AS count FROM analytics_events ${tableWhere} GROUP BY COALESCE(NULLIF(path, ''), 'Unknown') ORDER BY count DESC LIMIT 10`).all(...args);
   const topProducts = db.prepare(`
-    SELECT p.name, COUNT(*) AS count
+    SELECT COALESCE(p.name, 'Deleted product #' || ae.product_id) AS name, COUNT(*) AS count
     FROM analytics_events ae
     LEFT JOIN products p ON p.id = ae.product_id
     ${where} ${where ? "AND" : "WHERE"} ae.product_id IS NOT NULL
@@ -765,7 +1088,7 @@ app.get("/api/analytics", requirePermission("analytics"), (req, res) => {
     ORDER BY count DESC LIMIT 10
   `).all(...args);
   const topDownloads = db.prepare(`
-    SELECT d.name, COUNT(*) AS count
+    SELECT COALESCE(d.name, 'Deleted download #' || ae.download_id) AS name, COUNT(*) AS count
     FROM analytics_events ae
     LEFT JOIN download_objects d ON d.id = ae.download_id
     ${where} ${where ? "AND" : "WHERE"} ae.download_id IS NOT NULL
@@ -773,22 +1096,23 @@ app.get("/api/analytics", requirePermission("analytics"), (req, res) => {
     ORDER BY count DESC LIMIT 10
   `).all(...args);
   const marketplaceClicks = db.prepare(`
-    SELECT p.name, COUNT(*) AS count
+    SELECT COALESCE(p.name, 'Unknown product') AS name, COUNT(*) AS count
     FROM analytics_events ae
     LEFT JOIN products p ON p.id = ae.product_id
     ${where} ${where ? "AND" : "WHERE"} ae.event_type = 'marketplace_click'
-    GROUP BY ae.product_id
+    GROUP BY COALESCE(ae.product_id, ae.path, 'unknown')
     ORDER BY count DESC LIMIT 10
   `).all(...args);
-  const recent = db.prepare("SELECT * FROM analytics_events ORDER BY created_at DESC LIMIT 50").all();
-  res.json({
-    totals,
-    topPages,
-    topProducts,
-    topDownloads,
-    marketplaceClicks,
-    recent
+  const recent = db.prepare(`SELECT * FROM analytics_events ${tableWhere} ORDER BY created_at DESC LIMIT 50`).all(...args).map((event) => {
+    let metadata = {};
+    try {
+      metadata = event.metadata ? JSON.parse(event.metadata) : {};
+    } catch {
+      metadata = {};
+    }
+    return { ...event, metadata };
   });
+  res.json({ range, totals, topPages, topProducts, topDownloads, marketplaceClicks, recent });
 });
 
 app.post("/api/track", (req, res) => {
@@ -840,15 +1164,35 @@ app.get("/api/publish-events", requireAuth, (_req, res) => {
   res.json({ events: db.prepare("SELECT * FROM publish_events ORDER BY created_at DESC LIMIT 20").all() });
 });
 
-app.get("/api/audit-events", requirePermission("write"), (_req, res) => {
+app.get("/api/audit-events", requirePermission("write"), (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 200);
+  const eventType = cleanText(req.query.eventType);
+  const user = cleanText(req.query.user);
+  const search = cleanText(req.query.search);
+  const clauses = [];
+  const args = [];
+  if (eventType) {
+    clauses.push("ae.event_type = ?");
+    args.push(eventType);
+  }
+  if (user) {
+    clauses.push("u.username LIKE ?");
+    args.push(`%${user}%`);
+  }
+  if (search) {
+    clauses.push("(ae.message LIKE ? OR ae.entity_type LIKE ? OR ae.event_type LIKE ?)");
+    args.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const events = db.prepare(`
     SELECT ae.id, ae.event_type, ae.entity_type, ae.entity_id, ae.message, ae.metadata, ae.created_at,
       u.username
     FROM audit_events ae
     LEFT JOIN users u ON u.id = ae.user_id
+    ${where}
     ORDER BY ae.created_at DESC
-    LIMIT 100
-  `).all();
+    LIMIT ?
+  `).all(...args, limit);
   res.json({ events });
 });
 

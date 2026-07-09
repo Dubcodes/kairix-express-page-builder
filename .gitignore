@@ -8,6 +8,8 @@ data/*.sqlite
 data/*.sqlite-wal
 data/*.sqlite-shm
 data/*.sqlite-*
+data/backups/*
+!data/backups/.gitkeep
 uploads/*
 !uploads/.gitkeep
 generated-site/*
