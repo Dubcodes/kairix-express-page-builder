@@ -138,12 +138,19 @@ function fileIdForUrl(url = "") {
   return file ? [file.id] : [];
 }
 
+function fileLabelForUrl(url = "") {
+  const file = state.files.find((item) => String(item.url || "") === String(url || ""));
+  return file?.originalName || file?.original_name || "";
+}
+
 function imageSettingPicker(name, value = "") {
   return picker(name, imageFiles(), fileIdForUrl(value), "images", {
     single: true,
     valueField: "url",
     hiddenName: name,
-    hiddenValue: value || ""
+    hiddenValue: value || "",
+    hiddenLabel: fileLabelForUrl(value),
+    searchPlaceholder: "Search images (SVG, PNG, JPG, WebP, GIF)"
   });
 }
 
@@ -161,10 +168,10 @@ function isImageFile(file) {
 }
 
 function mediaKind(file) {
-  const mime = String(file.mimeType || file.mime_type || "");
+  const mime = String(file.mimeType || file.mime_type || "").toLowerCase();
   const name = String(file.originalName || file.original_name || "").toLowerCase();
-  if (mime.startsWith("image/")) return "images";
-  if (mime.includes("pdf") || name.endsWith(".txt")) return "documents";
+  if (isImageFile(file)) return "images";
+  if (mime.includes("pdf") || /\.(pdf|txt|md|docx?|xlsx?)$/i.test(name)) return "documents";
   if (mime.includes("zip") || /\.(exe|dmg|pkg|msi|bin|hex|uf2)$/i.test(name)) return "software";
   return "all";
 }
@@ -282,15 +289,21 @@ function picker(name, rows, selected = [], kind = "items", options = {}) {
   const valueField = options.valueField || "id";
   const hiddenName = options.hiddenName || (single ? name : "");
   const hiddenValue = options.hiddenValue || "";
+  const hiddenLabel = options.hiddenLabel || "";
+  const searchPlaceholder = options.searchPlaceholder || `Search ${kind}`;
   const inputName = single ? `${name}Selection` : name;
   const selectedSet = new Set((selected || []).map(Number));
-  const selectedLabel = single ? "selected" : "selected";
+  const selectedRow = rows.find((row) => selectedSet.has(Number(row.id)));
+  const selectedTitle = selectedRow?.originalName || selectedRow?.original_name || selectedRow?.name || hiddenLabel;
+  const selectedText = single
+    ? selectedTitle ? `Selected: ${selectedTitle}` : hiddenValue ? "Selected file is missing" : "No image selected"
+    : `${selectedSet.size} selected`;
   return `
     <div class="picker ${single ? "picker-single" : ""}" data-picker="${name}" ${single ? `data-picker-mode="single" data-picker-value-field="${escapeHtml(valueField)}"` : ""}>
-      ${single ? `<input type="hidden" name="${escapeHtml(hiddenName)}" value="${escapeHtml(hiddenValue)}" data-picker-hidden data-picker-initial="${escapeHtml(hiddenValue)}">` : ""}
+      ${single ? `<input type="hidden" name="${escapeHtml(hiddenName)}" value="${escapeHtml(hiddenValue)}" data-picker-hidden data-picker-initial="${escapeHtml(hiddenValue)}" data-picker-initial-label="${escapeHtml(hiddenLabel)}">` : ""}
       <div class="picker-toolbar">
-        <input data-picker-search placeholder="Search ${kind}" aria-label="Search ${kind}">
-        <span class="muted" data-picker-count>${selectedSet.size} ${selectedLabel}</span>
+        <input data-picker-search placeholder="${escapeHtml(searchPlaceholder)}" aria-label="${escapeHtml(searchPlaceholder)}">
+        <span class="muted picker-status" data-picker-count>${escapeHtml(selectedText)}</span>
         ${single ? "" : `<button class="secondary" type="button" data-picker-select-visible>Select all visible</button>`}
         <button class="secondary" type="button" data-picker-clear>Clear selected</button>
       </div>
@@ -353,6 +366,31 @@ function stockLabel(product) {
   if (count <= 4) return "Almost out";
   if (count <= 14) return "Low stock";
   return "10+ available";
+}
+
+function adminStockDisplay(product) {
+  if (!product.stock_tracking) return { label: "Stock not tracked", detail: "", type: "neutral" };
+  const missingCount = product.stock_count === null || product.stock_count === undefined || product.stock_count === "";
+  if (missingCount) {
+    if (String(product.stock_source || "").toLowerCase() === "marketplace") return { label: "Marketplace stock", detail: "", type: "synced" };
+    return { label: "Check marketplace", detail: "", type: "neutral" };
+  }
+  const count = Number(product.stock_count);
+  const detail = `${count} in stock`;
+  if (count <= 0) return { label: "Out of stock", detail, type: "danger" };
+  if (count <= 4) return { label: "Almost out", detail, type: "almost-out" };
+  if (count <= 14) return { label: "Low stock", detail, type: "warning" };
+  return { label: detail, detail: "", type: "success" };
+}
+
+function adminStockText(product) {
+  const stock = adminStockDisplay(product);
+  return [stock.label, stock.detail].filter(Boolean).join(" ");
+}
+
+function adminStockMarkup(product) {
+  const stock = adminStockDisplay(product);
+  return `<span class="stock-display">${pill(stock.label, stock.type)}${stock.detail ? `<span class="stock-detail">${escapeHtml(stock.detail)}</span>` : ""}</span>`;
 }
 
 function semanticType(value = "") {
@@ -582,11 +620,11 @@ function dashboardView() {
         <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Shows the last published static site.">Open public preview</a>
       </div>
       ${hasUnpublishedChanges() ? `<p class="muted">Preview may not include current edits until you publish.</p>` : ""}
-      <div class="list">
-        <div class="item"><h3>${state.categories.length}</h3><p>Categories</p></div>
-        <div class="item"><h3>${state.products.length}</h3><p>Products</p></div>
-        <div class="item"><h3>${state.downloads.length}</h3><p>Downloads</p></div>
-        <div class="item"><h3>${state.packs.length}</h3><p>Software Bundles</p></div>
+      <div class="list dashboard-stats">
+        <button class="item stat-card" type="button" data-tab-jump="products" title="Open product and category management" aria-label="Open product and category management"><h3>${state.categories.length}</h3><p>Categories</p></button>
+        <button class="item stat-card" type="button" data-tab-jump="products" title="Open Products" aria-label="Open Products"><h3>${state.products.length}</h3><p>Products</p></button>
+        <button class="item stat-card" type="button" data-tab-jump="downloads" title="Open Downloads" aria-label="Open Downloads"><h3>${state.downloads.length}</h3><p>Downloads</p></button>
+        <button class="item stat-card" type="button" data-tab-jump="bundles" title="Open Software Bundles" aria-label="Open Software Bundles"><h3>${state.packs.length}</h3><p>Software Bundles</p></button>
       </div>
     </section>
   `;
@@ -975,11 +1013,11 @@ function productsView() {
         <input id="productSearch" placeholder="Search products by name, SKU, or category" value="${escapeHtml(state.productSearch)}">
       </div>
       <div id="productList" class="list">${products.map((product) => `
-        <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""}" data-filter-row data-search="${escapeHtml(dataText(product.name, product.sku, product.category_name, product.short_description, stockLabel(product), product.import_sync_status))}">
+        <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""}" data-filter-row data-search="${escapeHtml(dataText(product.name, product.sku, product.category_name, product.short_description, adminStockText(product), product.import_sync_status))}">
           <div>
             <h3>${escapeHtml(product.name)} ${pill(product.publish_state || product.status, semanticType(product.publish_state || product.status), product.publish_state === "draft" ? "Not published to public site" : "")}${product.featured ? ` ${pill("Featured", "featured", "Shown on the public homepage")}` : ""}${product.import_sync_status ? ` ${pill(`AliExpress ${product.import_sync_status}`, "synced", "Linked to marketplace data")}` : ""}</h3>
             <p>${escapeHtml(product.short_description || "")}</p>
-            <p class="muted">${escapeHtml(product.category_name || "No category")} ${product.sku ? `- ${escapeHtml(product.sku)}` : ""} ${pill(stockLabel(product))}${product.last_imported_at ? ` - Synced ${escapeHtml(product.last_imported_at)}` : ""}</p>
+            <p class="muted">${escapeHtml(product.category_name || "No category")} ${product.sku ? `- ${escapeHtml(product.sku)}` : ""} ${adminStockMarkup(product)}${product.last_imported_at ? ` - Synced ${escapeHtml(product.last_imported_at)}` : ""}</p>
           </div>
           <div class="actions"><button type="button" data-edit-product="${product.id}">Edit</button><button class="secondary" type="button" data-duplicate-product="${product.id}">Duplicate</button>${product.import_sync_status ? `<button class="secondary" type="button" data-detach-aliexpress="${product.id}">Detach</button>` : ""}</div>
         </div>`).join("")}</div>
@@ -1659,16 +1697,26 @@ function bindTabEvents(content) {
       const query = String(search?.value || "").trim().toLowerCase();
       let selected = 0;
       let selectedValue = "";
+      let selectedTitle = "";
       pickerEl.querySelectorAll("[data-picker-row]").forEach((row) => {
-        const checked = row.querySelector("input[type='checkbox']")?.checked;
+        const input = row.querySelector("input[type='checkbox']");
+        const checked = input?.checked;
         if (checked) selected += 1;
-        if (checked) selectedValue = row.querySelector("input[type='checkbox']")?.dataset.pickerValue || "";
+        if (checked) {
+          selectedValue = input?.dataset.pickerValue || "";
+          selectedTitle = row.querySelector(".picker-main strong")?.textContent || "";
+        }
         const matches = String(row.dataset.search || "").toLowerCase().includes(query);
         row.classList.toggle("hidden", Boolean(query) && !matches && !checked);
         row.classList.toggle("picker-selected", Boolean(checked));
       });
       if (hidden) hidden.value = selected ? selectedValue : hidden.dataset.pickerInitial || "";
-      if (count) count.textContent = single ? (selected ? "1 selected" : "No image selected") : `${selected} selected`;
+      if (count) {
+        if (!single) count.textContent = `${selected} selected`;
+        else if (selectedTitle) count.textContent = `Selected: ${selectedTitle}`;
+        else if (hidden?.dataset.pickerInitial) count.textContent = "Selected file is missing";
+        else count.textContent = "No image selected";
+      }
     };
     search?.addEventListener("input", update);
     pickerEl.addEventListener("change", (event) => {
@@ -1685,6 +1733,7 @@ function bindTabEvents(content) {
         input.checked = true;
       });
       update();
+      pickerEl.dispatchEvent(new Event("change", { bubbles: true }));
     });
     pickerEl.querySelector("[data-picker-clear]")?.addEventListener("click", () => {
       if (hidden) hidden.dataset.pickerInitial = "";
@@ -1692,6 +1741,7 @@ function bindTabEvents(content) {
         input.checked = false;
       });
       update();
+      pickerEl.dispatchEvent(new Event("change", { bubbles: true }));
     });
     update();
   });
