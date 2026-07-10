@@ -130,6 +130,12 @@ const theme = s.theme || "clean-light";
       .hero {
         padding: 42px 0 26px;
       }
+      .hero-with-media {
+        display: grid;
+        grid-template-columns: minmax(0, 1.25fr) minmax(220px, 0.75fr);
+        gap: 24px;
+        align-items: center;
+      }
       .hero h1 {
         margin: 0 0 10px;
         font-size: clamp(34px, 7vw, 58px);
@@ -141,6 +147,17 @@ const theme = s.theme || "clean-light";
         margin: 0;
         color: var(--muted);
         font-size: 18px;
+      }
+      .hero-image,
+      .info-block-image {
+        width: 100%;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        object-fit: contain;
+      }
+      .hero-image {
+        max-height: 280px;
       }
       .section {
         padding: 20px 0;
@@ -178,6 +195,28 @@ const theme = s.theme || "clean-light";
       }
       .card p {
         line-height: 1.55;
+      }
+      .info-block {
+        padding: 20px;
+      }
+      .info-block h2 {
+        margin-top: 0;
+      }
+      .info-block-with-media,
+      .support-cta-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 18px;
+        align-items: center;
+      }
+      .info-block-with-media {
+        grid-template-columns: minmax(0, 1fr) minmax(180px, 320px);
+      }
+      .rich-text > :first-child {
+        margin-top: 0;
+      }
+      .rich-text > :last-child {
+        margin-bottom: 0;
       }
       .muted { color: var(--muted); }
       .eyebrow {
@@ -345,7 +384,10 @@ const theme = s.theme || "clean-light";
         }
         .filter-panel,
         .download-card,
-        .version-card {
+        .version-card,
+        .hero-with-media,
+        .info-block-with-media,
+        .support-cta-card {
           grid-template-columns: 1fr;
         }
         .type-filter,

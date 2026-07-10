@@ -1,52 +1,83 @@
 ---
 import PublicLayout from "../layouts/PublicLayout.astro";
 import ProductCard from "../components/ProductCard.astro";
-import { content, downloadsByType, sitePath, trackScript } from "../lib/content.js";
+import { assetPath, content, sitePath, trackScript } from "../lib/content.js";
 
+const s = content.settings;
 const featured = content.products.filter((product) => product.featured).slice(0, 6);
 const recent = content.products.slice(0, 6);
+const homeProducts = featured.length ? featured : recent;
+const heroTitle = s.homeHeroTitle || s.brandName;
+const showCategories = s.homeShowCategories !== false;
+const showProducts = s.homeShowFeaturedProducts !== false;
+const showSupportCta = s.homeShowSupportCta !== false;
+const showDownloadsSummary = s.homeShowDownloadsSummary === true;
+const showTextBlock = s.homeTextBlockEnabled && (s.homeTextBlockHeading || s.homeTextBlockText || s.homeTextBlockImage);
 ---
 <PublicLayout title="Home">
   <main>
-    <section class="hero inner">
-      <h1>{content.settings.brandName}</h1>
-      <p>{content.settings.introText}</p>
-    </section>
-    <section class="section inner">
-      <h2>Product categories</h2>
-      <div class="grid">
-        {content.categories.map((category) => (
-          <article class="card">
-            <h3>{category.name}</h3>
-            <p>{category.description}</p>
-            <a class="button secondary" href={sitePath(`/categories/${category.slug}/`)}>View products</a>
-          </article>
-        ))}
+    <section class:list={["hero", "inner", s.homeHeroImage && "hero-with-media"]}>
+      <div>
+        <h1>{heroTitle}</h1>
+        <p>{s.introText}</p>
       </div>
+      {s.homeHeroImage && <img class="hero-image" src={assetPath(s.homeHeroImage)} alt="" loading="eager">}
     </section>
-    <section class="section inner">
-      <h2>{featured.length ? "Featured products" : "Recent products"}</h2>
-      <div class="grid">
-        {(featured.length ? featured : recent).map((product) => <ProductCard product={product} />)}
-      </div>
-    </section>
-    <section class="section inner">
-      <h2>Downloads</h2>
-      <div class="grid">
-        {downloadsByType().map((group) => (
-          <article class="card">
-            <h3>{group.type}</h3>
-            <p>{group.downloads.length} item(s)</p>
-            <a class="button secondary" href={sitePath("/downloads/")}>Open downloads</a>
-          </article>
-        ))}
-      </div>
-    </section>
-    <section class="section inner">
-      <h2>Support</h2>
-      <p class="muted">Need product help, setup details, manuals or store links?</p>
-      <a class="button" href={sitePath("/support/")}>Contact support</a>
-    </section>
+    {showTextBlock && (
+      <section class="section inner">
+        <article class:list={["card", "info-block", s.homeTextBlockImage && "info-block-with-media"]}>
+          <div>
+            {s.homeTextBlockHeading && <h2>{s.homeTextBlockHeading}</h2>}
+            {s.homeTextBlockText && <div class="rich-text" set:html={s.homeTextBlockText} />}
+          </div>
+          {s.homeTextBlockImage && <img class="info-block-image" src={assetPath(s.homeTextBlockImage)} alt="" loading="lazy">}
+        </article>
+      </section>
+    )}
+    {showCategories && (
+      <section class="section inner">
+        <h2>Product categories</h2>
+        <div class="grid">
+          {content.categories.map((category) => (
+            <article class="card">
+              <h3>{category.name}</h3>
+              <p>{category.description}</p>
+              <a class="button secondary" href={sitePath(`/categories/${category.slug}/`)}>View products</a>
+            </article>
+          ))}
+        </div>
+      </section>
+    )}
+    {showProducts && (
+      <section class="section inner">
+        <h2>{featured.length ? "Featured products" : "Recent products"}</h2>
+        <div class="grid">
+          {homeProducts.map((product) => <ProductCard product={product} />)}
+        </div>
+      </section>
+    )}
+    {showSupportCta && (
+      <section class="section inner">
+        <article class="card support-cta-card">
+          <div>
+            <h2>{s.homeSupportHeading || "Support"}</h2>
+            <p class="muted">{s.homeSupportText || "Need product help, setup details, manuals or store links?"}</p>
+          </div>
+          <a class="button" href={sitePath("/support/")}>{s.homeSupportButtonLabel || "Contact support"}</a>
+        </article>
+      </section>
+    )}
+    {showDownloadsSummary && (
+      <section class="section inner">
+        <article class="card support-cta-card">
+          <div>
+            <h2>Downloads</h2>
+            <p class="muted">Find manuals, firmware, apps and setup files for supported products.</p>
+          </div>
+          <a class="button secondary" href={sitePath("/downloads/")}>Open downloads</a>
+        </article>
+      </section>
+    )}
   </main>
   <script is:inline set:html={trackScript("page_view")} />
 </PublicLayout>

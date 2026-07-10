@@ -416,7 +416,20 @@ app.put("/api/settings", requirePermission("write"), upload.single("logo"), (req
     "contactFormEnabled",
     "theme",
     "defaultMarketplaceLabel",
-    "footerText"
+    "footerText",
+    "homeHeroTitle",
+    "homeHeroImage",
+    "homeShowCategories",
+    "homeShowFeaturedProducts",
+    "homeShowSupportCta",
+    "homeShowDownloadsSummary",
+    "homeSupportHeading",
+    "homeSupportText",
+    "homeSupportButtonLabel",
+    "homeTextBlockEnabled",
+    "homeTextBlockHeading",
+    "homeTextBlockText",
+    "homeTextBlockImage"
   ];
   for (const field of fields) {
     if (Object.hasOwn(req.body, field)) setSetting(field, field.includes("Text") ? cleanRich(req.body[field]) : cleanText(req.body[field]));

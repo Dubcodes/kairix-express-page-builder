@@ -37,6 +37,7 @@ const state = {
 
 const tabs = [
   ["dashboard", "Dashboard"],
+  ["home", "Home Page"],
   ["products", "Products"],
   ["downloads", "Downloads"],
   ["bundles", "Software Bundles"],
@@ -102,6 +103,39 @@ function setStatus(message, error = false) {
 function optionList(rows, selected = []) {
   const selectedSet = new Set((selected || []).map(Number));
   return rows.map((row) => `<option value="${row.id}" ${selectedSet.has(Number(row.id)) ? "selected" : ""}>${escapeHtml(row.name)}</option>`).join("");
+}
+
+function settingEnabled(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function normalizedName(value = "") {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function findCategoryByName(name) {
+  const normalized = normalizedName(name);
+  if (!normalized) return null;
+  return state.categories.find((category) => normalizedName(category.name) === normalized) || null;
+}
+
+function categoryNameById(id) {
+  const category = state.categories.find((item) => Number(item.id) === Number(id));
+  return category?.name || "";
+}
+
+function imageFileOptions(selected = "") {
+  const selectedValue = String(selected || "");
+  return `<option value="">None</option>${state.files.filter(isImageFile).map((file) => {
+    const url = file.url || "";
+    const title = file.originalName || file.original_name || url;
+    return `<option value="${escapeHtml(url)}" ${url === selectedValue ? "selected" : ""}>${escapeHtml(title)}</option>`;
+  }).join("")}`;
+}
+
+function categoryDatalistOptions() {
+  return state.categories.map((category) => `<option value="${escapeHtml(category.name)}"></option>`).join("");
 }
 
 function formatBytes(size) {
@@ -480,6 +514,7 @@ function renderTab() {
   const content = document.querySelector("#tabContent");
   const view = {
     dashboard: dashboardView,
+    home: homePageView,
     settings: settingsView,
     categories: categoriesView,
     files: filesView,
@@ -532,6 +567,68 @@ function settingsView() {
   `;
 }
 
+function homePageView() {
+  const s = state.settings;
+  const featured = state.products.filter((product) => product.featured);
+  const heroPlaceholder = s.brandName || "Your business name";
+  return `
+    <section class="panel">
+      <div class="section-heading">
+        <h2>Home Page</h2>
+        <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer">Open preview</a>
+      </div>
+      ${unpublishedNotice()}
+      <p class="muted">Control the customer-facing home page. This does not change the Page Manager admin title.</p>
+      <form id="settingsForm" class="form-grid home-settings-form" data-settings-area="Home Page">
+        <fieldset class="wide form-section">
+          <legend>Hero</legend>
+          <div class="form-grid">
+            <label>Homepage title / hero heading<input name="homeHeroTitle" value="${escapeHtml(s.homeHeroTitle || "")}" placeholder="${escapeHtml(heroPlaceholder)}"></label>
+            <label>Hero image<select name="homeHeroImage">${imageFileOptions(s.homeHeroImage)}</select></label>
+            <label class="wide">Intro / subtitle<textarea name="introText">${escapeHtml(s.introText || "")}</textarea></label>
+          </div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Sections</legend>
+          <div class="home-toggle-grid">
+            <label class="check-row"><input name="homeShowCategories" type="checkbox" ${settingEnabled(s.homeShowCategories, true) ? "checked" : ""}> Show categories</label>
+            <label class="check-row"><input name="homeShowFeaturedProducts" type="checkbox" ${settingEnabled(s.homeShowFeaturedProducts, true) ? "checked" : ""}> Show featured products</label>
+            <label class="check-row"><input name="homeShowSupportCta" type="checkbox" ${settingEnabled(s.homeShowSupportCta, true) ? "checked" : ""}> Show support CTA</label>
+            <label class="check-row"><input name="homeShowDownloadsSummary" type="checkbox" ${settingEnabled(s.homeShowDownloadsSummary, false) ? "checked" : ""}> Show downloads summary</label>
+          </div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Support CTA</legend>
+          <div class="form-grid">
+            <label>Heading<input name="homeSupportHeading" value="${escapeHtml(s.homeSupportHeading || "Support")}"></label>
+            <label>Button label<input name="homeSupportButtonLabel" value="${escapeHtml(s.homeSupportButtonLabel || "Contact support")}"></label>
+            <label class="wide">Text<textarea name="homeSupportText">${escapeHtml(s.homeSupportText || "Need product help, setup details, manuals or store links?")}</textarea></label>
+          </div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>New customer block</legend>
+          <div class="form-grid">
+            <label class="check-row wide"><input name="homeTextBlockEnabled" type="checkbox" ${settingEnabled(s.homeTextBlockEnabled, false) ? "checked" : ""}> Show new customer block</label>
+            <label>Heading<input name="homeTextBlockHeading" value="${escapeHtml(s.homeTextBlockHeading || "")}"></label>
+            <label>Image<select name="homeTextBlockImage">${imageFileOptions(s.homeTextBlockImage)}</select></label>
+            <label class="wide">Body text<textarea name="homeTextBlockText">${escapeHtml(s.homeTextBlockText || "")}</textarea></label>
+          </div>
+        </fieldset>
+        <div class="wide form-actions"><button type="submit">Save Home Page</button></div>
+      </form>
+      <div class="item featured-status-panel">
+        <div>
+          <h3>Featured products</h3>
+          <p class="muted">${featured.length ? `${featured.length} product(s) selected for the homepage.` : "No products are selected. Recent products will show instead."}</p>
+        </div>
+        <div class="featured-status-list">
+          ${featured.map((product) => `<button class="secondary" type="button" data-edit-product="${product.id}" title="Edit ${escapeHtml(product.name)}">${escapeHtml(product.name)}</button>`).join("") || "<span class='muted'>Use a product editor to feature products.</span>"}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function developerSupportLink() {
   return `
     <div class="dev-support">
@@ -547,7 +644,7 @@ function brandingSettingsView() {
       <div class="section-heading">
         <h2>Store settings</h2>
       </div>
-      <form id="settingsForm" class="form-grid">
+      <form id="settingsForm" class="form-grid" data-settings-area="Settings/branding">
         <label>Store/brand name<input name="brandName" value="${escapeHtml(s.brandName || "")}"></label>
         <label>Logo<input name="logo" type="file" accept="image/*"></label>
         <label>Main marketplace/store link ${helpIcon("Link to this seller's marketplace store page.")}<input name="marketplaceUrl" value="${escapeHtml(s.marketplaceUrl || "")}"></label>
@@ -571,7 +668,7 @@ function supportSettingsView() {
     <section class="panel" id="supportContactSection">
       <h2>Support/contact info</h2>
       <p class="muted">Show customers where to get product help. For order or payment issues, direct them back to the marketplace order page.</p>
-      <form id="settingsForm" class="form-grid support-settings-form">
+      <form id="settingsForm" class="form-grid support-settings-form" data-settings-area="Settings/support/contact">
         <label>Support email<input name="supportEmail" type="email" value="${escapeHtml(s.supportEmail || "")}"></label>
         <label>Support link<input name="supportLink" value="${escapeHtml(s.supportLink || "")}"></label>
         <label>Marketplace/store link<input name="marketplaceUrl" value="${escapeHtml(s.marketplaceUrl || "")}"></label>
@@ -800,7 +897,7 @@ function productsView() {
       <div id="productList" class="list">${products.map((product) => `
         <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""}" data-filter-row data-search="${escapeHtml(dataText(product.name, product.sku, product.category_name, product.short_description, stockLabel(product), product.import_sync_status))}">
           <div>
-            <h3>${escapeHtml(product.name)} <span class="pill">${escapeHtml(product.publish_state || product.status)}</span>${product.import_sync_status ? ` <span class="pill">AliExpress ${escapeHtml(product.import_sync_status)}</span>` : ""}</h3>
+            <h3>${escapeHtml(product.name)} <span class="pill">${escapeHtml(product.publish_state || product.status)}</span>${product.featured ? ` <span class="pill featured-pill">Featured</span>` : ""}${product.import_sync_status ? ` <span class="pill">AliExpress ${escapeHtml(product.import_sync_status)}</span>` : ""}</h3>
             <p>${escapeHtml(product.short_description || "")}</p>
             <p class="muted">${escapeHtml(product.category_name || "No category")} ${product.sku ? `- ${escapeHtml(product.sku)}` : ""} - ${escapeHtml(stockLabel(product))}${product.last_imported_at ? ` - Synced ${escapeHtml(product.last_imported_at)}` : ""}</p>
           </div>
@@ -826,7 +923,12 @@ function productsView() {
             <label>Name<input name="name" required value="${escapeHtml(edit.name || "")}"></label>
             <label>SKU<input name="sku" value="${escapeHtml(edit.sku || "")}"></label>
             <label>Version indicator<input name="versionLabel" value="${escapeHtml(edit.version_label || "")}"></label>
-            <label>Category<select name="categoryId"><option value="">None</option>${optionList(state.categories, edit.category_id ? [edit.category_id] : [])}</select></label>
+            <label class="category-field">Category
+              <input name="categoryName" list="categoryOptions" value="${escapeHtml(edit.category_name || categoryNameById(edit.category_id) || "")}" placeholder="Select or type a category" autocomplete="off">
+              <input name="categoryId" type="hidden" value="${escapeHtml(edit.category_id || "")}">
+              <small class="field-help" data-category-hint>Choose an existing category or type a new one.</small>
+              <datalist id="categoryOptions">${categoryDatalistOptions()}</datalist>
+            </label>
             <label>Sort order<input name="sortOrder" type="number" value="${escapeHtml(edit.sort_order ?? 0)}"></label>
             <label>Publish state<select name="publishState">${[
               ["draft", "Draft"],
@@ -840,7 +942,8 @@ function productsView() {
         <fieldset class="wide form-section">
           <legend>Public display</legend>
           <div class="form-grid">
-            <label class="check-row"><input name="featured" type="checkbox" ${edit.featured ? "checked" : ""}> Featured</label>
+            <label class="check-row wide"><input name="featured" type="checkbox" ${edit.featured ? "checked" : ""}> Show on homepage as featured product</label>
+            <p class="field-help wide">Featured products appear on the public homepage. If none are featured, recent products are shown.</p>
             <label>Color options<input name="colorOptions" value="${escapeHtml(edit.color_options || "")}"></label>
             <label class="wide">Option notes<textarea name="optionNotes">${escapeHtml(edit.option_notes || "")}</textarea></label>
             <label class="wide">Short description<textarea name="shortDescription">${escapeHtml(edit.short_description || "")}</textarea></label>
@@ -1624,16 +1727,17 @@ function bindTabEvents(content) {
   if (settingsForm) settingsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     settingsForm.querySelectorAll("[data-generated-hidden]").forEach((input) => input.remove());
-    if (settingsForm.querySelector("[name='contactFormEnabled']") && !settingsForm.querySelector("[name='contactFormEnabled']").checked) {
+    settingsForm.querySelectorAll("input[type='checkbox'][name]").forEach((checkbox) => {
+      if (checkbox.checked) return;
       const hidden = document.createElement("input");
       hidden.type = "hidden";
-      hidden.name = "contactFormEnabled";
+      hidden.name = checkbox.name;
       hidden.value = "false";
       hidden.dataset.generatedHidden = "true";
       settingsForm.append(hidden);
-    }
+    });
     await api("/api/settings", { method: "PUT", body: new FormData(settingsForm) });
-    markUnpublishedChanges("Settings/support/contact");
+    markUnpublishedChanges(settingsForm.dataset.settingsArea || "Settings/support/contact");
     await loadData();
     renderAdmin();
     setStatus("Settings saved.");
@@ -1771,6 +1875,7 @@ function bindTabEvents(content) {
 
   content.querySelectorAll("[data-edit-product]").forEach((button) => {
     button.addEventListener("click", async () => {
+      state.tab = "products";
       state.editingProductId = Number(button.dataset.editProduct);
       state.editingProduct = await api(`/api/products/${state.editingProductId}`);
       state.showProductForm = true;
@@ -1866,6 +1971,21 @@ function bindTabEvents(content) {
   const productForm = content.querySelector("#productForm");
   if (productForm) {
     const dirtyState = content.querySelector("#productDirtyState");
+    const categoryNameInput = productForm.querySelector("[name='categoryName']");
+    const categoryIdInput = productForm.querySelector("[name='categoryId']");
+    const categoryHint = productForm.querySelector("[data-category-hint]");
+    const updateCategoryHint = () => {
+      const name = String(categoryNameInput?.value || "").trim();
+      const existing = findCategoryByName(name);
+      if (categoryIdInput) categoryIdInput.value = existing?.id || "";
+      if (!categoryHint) return;
+      if (!name) categoryHint.textContent = "Choose an existing category or type a new one.";
+      else if (existing) categoryHint.textContent = `Existing category: ${existing.name}`;
+      else categoryHint.textContent = `Create category: ${name}`;
+    };
+    categoryNameInput?.addEventListener("input", updateCategoryHint);
+    categoryNameInput?.addEventListener("change", updateCategoryHint);
+    updateCategoryHint();
     productForm.addEventListener("input", () => {
       if (dirtyState) dirtyState.textContent = "Unsaved changes.";
     });
@@ -1875,7 +1995,19 @@ function bindTabEvents(content) {
     productForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const values = formValues(productForm);
-    values.categoryId = values.categoryId ? Number(values.categoryId) : null;
+    const typedCategoryName = String(values.categoryName || "").trim();
+    let categoryId = values.categoryId ? Number(values.categoryId) : null;
+    if (typedCategoryName) {
+      const existing = findCategoryByName(typedCategoryName);
+      if (existing) categoryId = Number(existing.id);
+      else {
+        const created = await api("/api/categories", { method: "POST", body: { name: typedCategoryName, description: "" } });
+        categoryId = Number(created.category.id);
+        state.categories = [...state.categories, created.category].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      }
+    }
+    values.categoryId = categoryId;
+    delete values.categoryName;
     values.featured = Boolean(productForm.querySelector("[name='featured']").checked);
     values.stockTracking = values.stockTracking === "1";
     values.stockCount = values.stockCount === "" ? null : Number(values.stockCount);

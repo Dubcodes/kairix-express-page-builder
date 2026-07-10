@@ -18,6 +18,11 @@ function clean(value, rich = false) {
   });
 }
 
+function boolSetting(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
 function fileUrl(file) {
   if (!file) return null;
   return `/uploads/${file.stored_name}`;
@@ -199,10 +204,23 @@ export async function buildExportData() {
       supportEmail: settings.supportEmail || "",
       supportLink: settings.supportLink || "",
       contactMethods,
-      contactFormEnabled: ["1", "true", "yes", "on"].includes(String(settings.contactFormEnabled || "").toLowerCase()),
+      contactFormEnabled: boolSetting(settings.contactFormEnabled),
       theme: settings.theme || "clean-light",
       defaultMarketplaceLabel: settings.defaultMarketplaceLabel || "Buy on AliExpress",
-      footerText: clean(settings.footerText || "")
+      footerText: clean(settings.footerText || ""),
+      homeHeroTitle: clean(settings.homeHeroTitle || ""),
+      homeHeroImage: settings.homeHeroImage || "",
+      homeShowCategories: boolSetting(settings.homeShowCategories, true),
+      homeShowFeaturedProducts: boolSetting(settings.homeShowFeaturedProducts, true),
+      homeShowSupportCta: boolSetting(settings.homeShowSupportCta, true),
+      homeShowDownloadsSummary: boolSetting(settings.homeShowDownloadsSummary, false),
+      homeSupportHeading: clean(settings.homeSupportHeading || "Support"),
+      homeSupportText: clean(settings.homeSupportText || "Need product help, setup details, manuals or store links?"),
+      homeSupportButtonLabel: clean(settings.homeSupportButtonLabel || "Contact support"),
+      homeTextBlockEnabled: boolSetting(settings.homeTextBlockEnabled, false),
+      homeTextBlockHeading: clean(settings.homeTextBlockHeading || ""),
+      homeTextBlockText: clean(settings.homeTextBlockText || "", true),
+      homeTextBlockImage: settings.homeTextBlockImage || ""
     },
     categories: categories.map((category) => ({
       ...category,

@@ -296,6 +296,14 @@ textarea {
   font-size: 16px;
 }
 
+.field-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
 .notice {
   display: inline-flex;
   align-items: center;
@@ -335,6 +343,12 @@ textarea {
 .marketplace-synced {
   border-color: #a9d6ff;
   background: #f3f9ff;
+}
+
+.featured-pill {
+  color: #075985;
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
 }
 
 .user-row {
@@ -491,6 +505,42 @@ button.approve {
 
 .form-section + .form-section {
   margin-top: 4px;
+}
+
+.home-settings-form {
+  margin-top: 12px;
+}
+
+.home-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 14px;
+}
+
+.featured-status-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr);
+  gap: 14px;
+  align-items: start;
+  margin-top: 12px;
+}
+
+.featured-status-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.featured-status-list button {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-field {
+  align-content: start;
 }
 
 .picker {
@@ -885,6 +935,7 @@ pre {
   .contact-method-row,
   .contact-method-edit,
   .contact-method-form,
+  .featured-status-panel,
   .mini-row {
     grid-template-columns: 1fr;
     align-items: stretch;
