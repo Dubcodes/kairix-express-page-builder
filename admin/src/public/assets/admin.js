@@ -1,5 +1,6 @@
 const app = document.querySelector("#app");
 const adminTitle = document.querySelector("#adminTitle");
+const sessionBox = document.querySelector("#sessionBox");
 const sessionLabel = document.querySelector("#sessionLabel");
 const logoutBtn = document.querySelector("#logoutBtn");
 
@@ -177,12 +178,18 @@ function updateAdminTitle(settings = {}) {
   document.title = title;
 }
 
+function updateSessionUi(user) {
+  const loggedIn = Boolean(user);
+  if (sessionBox) sessionBox.classList.toggle("hidden", !loggedIn);
+  if (sessionLabel) sessionLabel.textContent = loggedIn ? `${user.username} (${user.role})` : "";
+  if (logoutBtn) logoutBtn.classList.toggle("hidden", !loggedIn);
+}
+
 async function refresh() {
   const me = await api("/api/me");
   state.me = me;
   state.csrfToken = me.csrfToken;
-  sessionLabel.textContent = me.user ? `${me.user.username} (${me.user.role})` : "";
-  logoutBtn.classList.toggle("hidden", !me.user);
+  updateSessionUi(me.user);
   if (me.needsSetup) return renderSetup();
   if (!me.user) return renderLogin();
   await loadData();
@@ -231,6 +238,8 @@ function renderLogin() {
     event.preventDefault();
     try {
       await api("/api/login", { method: "POST", body: formValues(event.currentTarget) });
+      state.tab = "dashboard";
+      saveNavigation();
       await refresh();
     } catch (error) {
       setStatus(error.message, true);
