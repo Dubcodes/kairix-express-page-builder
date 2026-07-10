@@ -9,9 +9,12 @@
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <div>
+        <div class="brand-lockup">
+          <img id="adminLogo" class="admin-logo hidden" alt="">
+          <div>
           <p class="eyebrow">Kairix</p>
           <h1 id="adminTitle">Kairix Page Manager</h1>
+          </div>
         </div>
         <div id="sessionBox" class="session hidden">
           <span id="sessionLabel"></span>
@@ -38,6 +41,7 @@
     <template id="loginTemplate">
       <section class="panel narrow">
         <h2>Admin login</h2>
+        <p id="loginStatus" class="status error hidden"></p>
         <form id="loginForm" class="form-grid">
           <label>Username or email<input name="username" autocomplete="username" required></label>
           <label>Password<input name="password" type="password" autocomplete="current-password" required></label>

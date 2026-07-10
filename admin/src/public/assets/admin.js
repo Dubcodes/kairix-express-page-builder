@@ -1,5 +1,6 @@
 const app = document.querySelector("#app");
 const adminTitle = document.querySelector("#adminTitle");
+const adminLogo = document.querySelector("#adminLogo");
 const sessionBox = document.querySelector("#sessionBox");
 const sessionLabel = document.querySelector("#sessionLabel");
 const logoutBtn = document.querySelector("#logoutBtn");
@@ -22,7 +23,12 @@ const state = {
   settingsSection: "branding",
   productSearch: "",
   downloadSearch: "",
+  mediaSearch: "",
+  mediaFilter: "all",
   bundleSearch: "",
+  userSearch: "",
+  selectedDownloadId: null,
+  showDownloadEditor: false,
   showProductForm: false,
   editingProductId: null,
   editingProduct: null
@@ -97,13 +103,128 @@ function optionList(rows, selected = []) {
   return rows.map((row) => `<option value="${row.id}" ${selectedSet.has(Number(row.id)) ? "selected" : ""}>${escapeHtml(row.name)}</option>`).join("");
 }
 
-function checkboxes(name, rows, selected = []) {
+function formatBytes(size) {
+  const bytes = Number(size || 0);
+  if (!bytes) return "0 KB";
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function isImageFile(file) {
+  return String(file.mimeType || file.mime_type || "").startsWith("image/");
+}
+
+function mediaKind(file) {
+  const mime = String(file.mimeType || file.mime_type || "");
+  const name = String(file.originalName || file.original_name || "").toLowerCase();
+  if (mime.startsWith("image/")) return "images";
+  if (mime.includes("pdf") || name.endsWith(".txt")) return "documents";
+  if (mime.includes("zip") || /\.(exe|dmg|pkg|msi|bin|hex|uf2)$/i.test(name)) return "software";
+  return "all";
+}
+
+function latestVersion(download) {
+  return (download.versions || []).find((version) => version.is_latest) || (download.versions || [])[0] || null;
+}
+
+function latestVersionLabel(download) {
+  const latest = latestVersion(download);
+  return latest?.version_number ? `Latest ${latest.version_number}` : "No latest version";
+}
+
+function dataText(...values) {
+  return values.filter(Boolean).join(" ").toLowerCase();
+}
+
+function filterRows(root, input, selector = "[data-filter-row]") {
+  const query = String(input?.value || "").trim().toLowerCase();
+  root.querySelectorAll(selector).forEach((row) => {
+    const text = String(row.dataset.search || row.textContent || "").toLowerCase();
+    row.classList.toggle("hidden", Boolean(query) && !text.includes(query));
+  });
+}
+
+function bindLiveFilter(input, root, selector = "[data-filter-row]") {
+  if (!input || !root) return;
+  const apply = () => filterRows(root, input, selector);
+  input.addEventListener("input", apply);
+  apply();
+}
+
+function bindCopyButtons(root = document) {
+  root.querySelectorAll("[data-copy-value]").forEach((button) => {
+    if (button.dataset.copyBound) return;
+    button.dataset.copyBound = "true";
+    button.addEventListener("click", async () => copyText(button.dataset.copyValue || "", button));
+  });
+}
+
+async function copyText(value, source) {
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+    else throw new Error("Clipboard unavailable");
+  } catch {
+    const input = source?.closest(".link-result")?.querySelector("input") || source?.parentElement?.querySelector("input");
+    if (input) {
+      input.focus();
+      input.select();
+      document.execCommand("copy");
+    }
+  }
+  if (source) {
+    const original = source.textContent;
+    source.textContent = "Copied";
+    window.setTimeout(() => {
+      source.textContent = original;
+    }, 1400);
+  }
+  setStatus("Copied.");
+}
+
+function mediaThumb(file) {
+  if (isImageFile(file)) return `<img class="media-thumb" src="${escapeHtml(file.url)}" alt="">`;
+  return `<span class="media-thumb media-thumb-icon">${escapeHtml((file.originalName || "file").split(".").pop().slice(0, 4).toUpperCase())}</span>`;
+}
+
+function pickerMeta(row, kind) {
+  if (kind === "files") return `${mediaThumb(row)}<span><strong>${escapeHtml(row.originalName || row.original_name || `File ${row.id}`)}</strong><small>${escapeHtml(row.mimeType || row.mime_type || "")} · ${formatBytes(row.size)}</small></span><a class="action-link mini-action" href="${escapeHtml(row.url || "#")}" target="_blank" rel="noopener noreferrer">Open</a>`;
+  if (kind === "products") return `<span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.sku || "No SKU")} · ${escapeHtml(row.category_name || "No category")} · ${row.import_sync_status ? "Synced" : "Local"}</small></span>`;
+  if (kind === "downloads") return `<span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.type)} · ${escapeHtml(latestVersionLabel(row))}</small></span>`;
+  if (kind === "bundles") return `<span><strong>${escapeHtml(row.name)}</strong><small>${Number(row.downloadIds?.length || 0)} download(s) · ${row.bundle_file_id ? "ZIP generated" : row.auto_generate_zip ? "ZIP on publish" : "No ZIP"}</small></span>`;
+  return `<span><strong>${escapeHtml(row.name || row.originalName || `Item ${row.id}`)}</strong></span>`;
+}
+
+function pickerSearchText(row, kind) {
+  if (kind === "files") return dataText(row.originalName, row.mimeType, row.size);
+  if (kind === "products") return dataText(row.name, row.sku, row.category_name, row.import_sync_status);
+  if (kind === "downloads") return dataText(row.name, row.type, latestVersionLabel(row));
+  if (kind === "bundles") return dataText(row.name, row.description);
+  return dataText(row.name, row.originalName);
+}
+
+function picker(name, rows, selected = [], kind = "items") {
   const selectedSet = new Set((selected || []).map(Number));
-  return `<div class="checkbox-grid">${rows.map((row) => `
-    <label class="check-row">
-      <input type="checkbox" name="${name}" value="${row.id}" ${selectedSet.has(Number(row.id)) ? "checked" : ""}>
-      <span>${escapeHtml(row.name || row.originalName || row.original_name || `File ${row.id}`)}</span>
-    </label>`).join("") || "<p class='muted'>No items yet.</p>"}</div>`;
+  return `
+    <div class="picker" data-picker="${name}">
+      <div class="picker-toolbar">
+        <input data-picker-search placeholder="Search ${kind}" aria-label="Search ${kind}">
+        <span class="muted" data-picker-count>${selectedSet.size} selected</span>
+        <button class="secondary" type="button" data-picker-select-visible>Select all visible</button>
+        <button class="secondary" type="button" data-picker-clear>Clear selected</button>
+      </div>
+      <div class="picker-list">
+        ${rows.map((row) => {
+          const checked = selectedSet.has(Number(row.id));
+          return `
+            <label class="picker-row ${checked ? "picker-selected" : ""}" data-picker-row data-search="${escapeHtml(pickerSearchText(row, kind))}">
+              <input type="checkbox" name="${name}" value="${row.id}" ${checked ? "checked" : ""}>
+              ${pickerMeta(row, kind)}
+            </label>
+          `;
+        }).join("") || "<p class='muted'>No items yet.</p>"}
+      </div>
+    </div>
+  `;
 }
 
 function helpIcon(text) {
@@ -133,6 +254,7 @@ function linkResult(label, url) {
       <label>${escapeHtml(label)}<input readonly value="${escapeHtml(url)}" onclick="this.select()"></label>
       <a class="action-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open</a>
       <button class="secondary" type="button" data-copy-value="${escapeHtml(url)}">Copy</button>
+      <p class="muted wide">This is a one-time link. It expires after the selected time. If approval is required, the user cannot log in until approved.</p>
     </div>
   `;
 }
@@ -175,7 +297,27 @@ function pageManagerTitle(settings = {}) {
 function updateAdminTitle(settings = {}) {
   const title = pageManagerTitle(settings);
   if (adminTitle) adminTitle.textContent = title;
+  if (adminLogo) {
+    adminLogo.src = settings.logo || "";
+    adminLogo.classList.toggle("hidden", !settings.logo);
+  }
   document.title = title;
+}
+
+function hasUnpublishedChanges() {
+  return localStorage.getItem("kairixUnpublishedChanges") === "1";
+}
+
+function unpublishedNotice() {
+  return hasUnpublishedChanges() ? `<p class="notice">Unpublished changes - publish needed.</p>` : "";
+}
+
+function markUnpublishedChanges() {
+  localStorage.setItem("kairixUnpublishedChanges", "1");
+}
+
+function clearUnpublishedChanges() {
+  localStorage.removeItem("kairixUnpublishedChanges");
 }
 
 function updateSessionUi(user) {
@@ -242,6 +384,12 @@ function renderLogin() {
       saveNavigation();
       await refresh();
     } catch (error) {
+      const loginStatus = document.querySelector("#loginStatus");
+      if (loginStatus) {
+        loginStatus.textContent = error.message;
+        loginStatus.classList.remove("hidden");
+        return;
+      }
       setStatus(error.message, true);
     }
   });
@@ -286,10 +434,11 @@ function dashboardView() {
   return `
     <section class="panel">
       <h2>Page Manager overview</h2>
+      ${unpublishedNotice()}
       <p class="muted">Create products, group downloads into Software Bundles, publish the static customer support site, and review basic analytics.</p>
       <div class="actions">
         <button id="sampleBtn" type="button">Create rich sample data</button>
-        <a class="action-link" href="/preview/" target="_blank">Open generated preview</a>
+        <a class="action-link" href="/preview/" target="_blank">Open last published preview</a>
       </div>
       <div class="list">
         <div class="item"><h3>${state.categories.length}</h3><p>Categories</p></div>
@@ -321,8 +470,7 @@ function settingsView() {
 function developerSupportLink() {
   return `
     <div class="dev-support">
-      <span>Support this tool</span>
-      <a class="coffee-icon-link" href="https://buymeacoffee.com/dubcodes" target="_blank" rel="noopener noreferrer" title="Buy me a coffee" aria-label="Buy me a coffee">☕</a>
+      <a class="coffee-icon-link" href="https://buymeacoffee.com/dubcodes" target="_blank" rel="noopener noreferrer" title="Support the developer" aria-label="Support the developer">☕</a>
     </div>
   `;
 }
@@ -420,63 +568,107 @@ function categoriesView() {
 }
 
 function filesView() {
+  const filters = [
+    ["all", "All"],
+    ["images", "Images"],
+    ["documents", "Documents"],
+    ["software", "Archives/software"]
+  ];
   return `
     <section class="panel">
-      <h2>Media Library</h2>
+      <div class="section-heading">
+        <h2>Media Library</h2>
+      </div>
       <p class="muted">Upload product images, manuals, firmware, installers and demo files. Risky software file types are allowed for downloads but are never executed by this app.</p>
       <form id="fileForm" class="form-grid">
         <label class="wide">Upload files<input name="files" type="file" multiple></label>
         <button type="submit">Upload</button>
       </form>
-      <div class="list">${state.files.map((file) => `<div class="item"><h3>${escapeHtml(file.originalName)}</h3><p>${escapeHtml(file.mimeType)} - ${Math.round(file.size / 1024)} KB</p><a href="${file.url}" target="_blank">${file.url}</a></div>`).join("")}</div>
+      <div class="toolbar media-toolbar">
+        <input id="mediaSearch" placeholder="Search media" value="${escapeHtml(state.mediaSearch)}">
+        <div class="segmented">${filters.map(([value, label]) => `<button class="secondary ${state.mediaFilter === value ? "active" : ""}" type="button" data-media-filter="${value}">${label}</button>`).join("")}</div>
+      </div>
+      <div id="mediaList" class="list media-list">
+        ${state.files.map((file) => `
+          <div class="item media-row" data-filter-row data-kind="${mediaKind(file)}" data-search="${escapeHtml(dataText(file.originalName, file.mimeType, file.size))}">
+            ${mediaThumb(file)}
+            <div>
+              <h3>${escapeHtml(file.originalName)}</h3>
+              <p class="muted">${escapeHtml(file.mimeType)} · ${formatBytes(file.size)}</p>
+            </div>
+            <div class="actions">
+              <a class="action-link" href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer">Open</a>
+              <button class="secondary" type="button" data-copy-value="${escapeHtml(file.url)}">Copy URL</button>
+            </div>
+          </div>
+        `).join("") || "<p class='muted'>No media files uploaded yet.</p>"}
+      </div>
     </section>
   `;
 }
 
 function downloadsView() {
+  const selectedDownload = state.downloads.find((download) => Number(download.id) === Number(state.selectedDownloadId)) || null;
+  const editorDownload = state.showDownloadEditor ? selectedDownload || {} : null;
   return `
     <section class="panel">
-      <h2>Downloads</h2>
+      <div class="section-heading">
+        <h2>Downloads</h2>
+        <button id="newDownloadBtn" type="button">Add Download</button>
+      </div>
       <div class="toolbar"><input id="downloadSearch" placeholder="Search downloads" value="${escapeHtml(state.downloadSearch)}"></div>
+      <div id="downloadList" class="list">${state.downloads.map((download) => `
+        <div class="item download-row" data-filter-row data-edit-download="${download.id}" data-search="${escapeHtml(dataText(download.name, download.type, download.short_description, latestVersionLabel(download)))}">
+          <div>
+            <h3>${escapeHtml(download.name)} <span class="pill">${escapeHtml(download.type)}</span></h3>
+            <p>${escapeHtml(download.short_description || "")}</p>
+            <p class="muted">${escapeHtml(latestVersionLabel(download))} · ${(download.versions || []).length} version(s)</p>
+          </div>
+          <div class="actions">
+            <button type="button" data-edit-download="${download.id}">Edit</button>
+            <button class="secondary" type="button" data-add-version="${download.id}">Add version</button>
+            <a class="action-link" href="/preview/downloads/${escapeHtml(download.slug)}/" target="_blank" rel="noopener noreferrer">Version history</a>
+            <button class="danger" type="button" data-archive-download="${download.id}">Archive</button>
+          </div>
+        </div>`).join("") || "<p class='muted'>No downloads yet.</p>"}</div>
     </section>
-    <div class="grid-two">
-      <section class="panel">
-        <h2>Create download</h2>
+    ${editorDownload ? `
+      <section class="panel editor-panel" id="downloadEditor">
+        <div class="section-heading">
+          <h2>${editorDownload.id ? `Edit ${escapeHtml(editorDownload.name)}` : "Create download"}</h2>
+          <button class="secondary" id="closeDownloadEditorBtn" type="button">Close</button>
+        </div>
         <form id="downloadForm" class="form-grid">
-          <label>Name<input name="name" required></label>
-          <label>Type<select name="type">${["Android", "iOS", "Windows", "Mac", "Firmware", "Manual", "Other"].map((type) => `<option>${type}</option>`).join("")}</select></label>
-          <label class="wide">Short description<textarea name="shortDescription"></textarea></label>
-          <label class="wide">External URL<input name="externalUrl" placeholder="https://"></label>
-          <button type="submit">Create download</button>
+          <label>Name<input name="name" required value="${escapeHtml(editorDownload.name || "")}"></label>
+          <label>Type<select name="type">${["Android", "iOS", "Windows", "Mac", "Firmware", "Manual", "Other"].map((type) => `<option value="${type}" ${(editorDownload.type || "Other") === type ? "selected" : ""}>${type}</option>`).join("")}</select></label>
+          <label>Sort order<input name="sortOrder" type="number" value="${escapeHtml(editorDownload.sort_order ?? 0)}"></label>
+          <label>Display group<input name="displayGroup" value="${escapeHtml(editorDownload.display_group || "")}"></label>
+          <label class="wide">External URL<input name="externalUrl" placeholder="https://" value="${escapeHtml(editorDownload.external_url || "")}"></label>
+          <label class="wide">Short description<textarea name="shortDescription">${escapeHtml(editorDownload.short_description || "")}</textarea></label>
+          <button type="submit">${editorDownload.id ? "Save download" : "Create download"}</button>
         </form>
+        ${editorDownload.id ? `
+          <div class="divider"></div>
+          <h3>Add version</h3>
+          <form id="versionForm" class="form-grid" data-download-id="${editorDownload.id}">
+            <label>Version number<input name="versionNumber" required></label>
+            <label>Release date<input name="releaseDate" type="date"></label>
+            <label>Uploaded file<select name="fileId"><option value="">None</option>${optionList(state.files)}</select></label>
+            <label class="wide">External URL<input name="externalUrl"></label>
+            <label class="wide">Release notes<textarea name="releaseNotes"></textarea></label>
+            <label class="check-row"><input name="isLatest" type="checkbox" checked> Latest</label>
+            <label class="check-row"><input name="deprecated" type="checkbox"> Deprecated</label>
+            <label>Warning text<input name="warningText"></label>
+            <label>File size<input name="fileSize"></label>
+            <label>Checksum<input name="checksum"></label>
+            <button type="submit">Add version</button>
+          </form>
+          <div class="list">
+            ${(editorDownload.versions || []).map((version) => `<div class="item mini-row"><div><strong>${escapeHtml(version.version_number)}</strong> ${version.is_latest ? "<span class='pill'>Latest</span>" : ""}<p class="muted">${escapeHtml(version.release_date || "No date")} ${version.deprecated ? "· Deprecated" : ""}</p></div></div>`).join("") || "<p class='muted'>No versions yet.</p>"}
+          </div>
+        ` : ""}
       </section>
-      <section class="panel">
-        <h2>Add version</h2>
-        <form id="versionForm" class="form-grid">
-          <label>Download<select name="downloadId">${optionList(state.downloads)}</select></label>
-          <label>Version number<input name="versionNumber" required></label>
-          <label>Release date<input name="releaseDate" type="date"></label>
-          <label>Uploaded file<select name="fileId"><option value="">None</option>${optionList(state.files)}</select></label>
-          <label class="wide">External URL<input name="externalUrl"></label>
-          <label class="wide">Release notes<textarea name="releaseNotes"></textarea></label>
-          <label class="check-row"><input name="isLatest" type="checkbox" checked> Latest</label>
-          <label class="check-row"><input name="deprecated" type="checkbox"> Deprecated</label>
-          <label>Warning text<input name="warningText"></label>
-          <label>File size<input name="fileSize"></label>
-          <label>Checksum placeholder<input name="checksum"></label>
-          <button type="submit">Add version</button>
-        </form>
-      </section>
-    </div>
-    <section class="panel">
-      <h2>Existing downloads</h2>
-      <div class="list">${state.downloads.filter((download) => !state.downloadSearch || download.name.toLowerCase().includes(state.downloadSearch.toLowerCase()) || download.type.toLowerCase().includes(state.downloadSearch.toLowerCase())).map((download) => `
-        <div class="item">
-          <h3>${escapeHtml(download.name)} <span class="pill">${escapeHtml(download.type)}</span></h3>
-          <p>${escapeHtml(download.short_description || "")}</p>
-          <p class="muted">${download.versions.length} version(s)</p>
-        </div>`).join("")}</div>
-    </section>
+    ` : ""}
   `;
 }
 
@@ -489,11 +681,11 @@ function bundlesView() {
       <form id="packForm" class="form-grid">
         <label>Name<input name="name" required></label>
         <label class="wide">Description<textarea name="description"></textarea></label>
-        <div class="wide"><strong>Downloads included in this Software Bundle</strong>${checkboxes("downloadIds", state.downloads)}</div>
+        <div class="wide"><strong>Downloads included in this Software Bundle</strong>${picker("downloadIds", state.downloads, [], "downloads")}</div>
         <label class="check-row"><input name="autoGenerateZip" type="checkbox" checked> Auto-generate ZIP during publish</label>
         <button type="submit">Create Software Bundle</button>
       </form>
-      <div class="list">${state.packs.filter((pack) => !state.bundleSearch || pack.name.toLowerCase().includes(state.bundleSearch.toLowerCase())).map((pack) => `<div class="item"><h3>${escapeHtml(pack.name)}</h3><p>${escapeHtml(pack.description || "")}</p>${supportPackIncludes(pack)}<p class="muted">ZIP: ${pack.bundle_file_id ? "Generated" : pack.auto_generate_zip ? "Will generate on publish when local files exist" : "Disabled"}</p></div>`).join("")}</div>
+      <div id="bundleList" class="list">${state.packs.map((pack) => `<div class="item" data-filter-row data-search="${escapeHtml(dataText(pack.name, pack.description))}"><h3>${escapeHtml(pack.name)}</h3><p>${escapeHtml(pack.description || "")}</p>${supportPackIncludes(pack)}<p class="muted">ZIP: ${pack.bundle_file_id ? "Generated" : pack.auto_generate_zip ? "Will generate on publish when local files exist" : "Disabled"}</p></div>`).join("")}</div>
     </section>
   `;
 }
@@ -517,8 +709,8 @@ function productsView() {
       <div class="toolbar">
         <input id="productSearch" placeholder="Search products by name, SKU, or category" value="${escapeHtml(state.productSearch)}">
       </div>
-      <div class="list">${products.map((product) => `
-        <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""}">
+      <div id="productList" class="list">${products.map((product) => `
+        <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""}" data-filter-row data-search="${escapeHtml(dataText(product.name, product.sku, product.category_name, product.short_description, stockLabel(product), product.import_sync_status))}">
           <div>
             <h3>${escapeHtml(product.name)} <span class="pill">${escapeHtml(product.publish_state || product.status)}</span>${product.import_sync_status ? ` <span class="pill">AliExpress ${escapeHtml(product.import_sync_status)}</span>` : ""}</h3>
             <p>${escapeHtml(product.short_description || "")}</p>
@@ -530,29 +722,64 @@ function productsView() {
     <section class="panel ${state.showProductForm ? "" : "hidden"}" id="productEditor">
       <h2>${state.editingProductId ? "Edit product" : "Create product"}</h2>
       <form id="productForm" class="form-grid">
-        <label>Name<input name="name" required value="${escapeHtml(edit.name || "")}"></label>
-        <label>SKU<input name="sku" value="${escapeHtml(edit.sku || "")}"></label>
-        <label>Version indicator<input name="versionLabel" value="${escapeHtml(edit.version_label || "")}"></label>
-        <label>Category<select name="categoryId"><option value="">None</option>${optionList(state.categories, edit.category_id ? [edit.category_id] : [])}</select></label>
-        <label>Publish state<select name="publishState">${["draft", "ready", "published", "needs_review"].map((value) => `<option value="${value}" ${(edit.publish_state || "draft") === value ? "selected" : ""}>${value.replace("_", " ")}</option>`).join("")}</select></label>
-        <label>Sort order<input name="sortOrder" type="number" value="${escapeHtml(edit.sort_order ?? 0)}"></label>
-        <label class="wide">Marketplace product URL ${helpIcon("Link to this product's AliExpress, Alibaba, eBay, or other marketplace listing.")}<input name="marketplaceUrl" value="${escapeHtml(edit.marketplace_url || "")}"></label>
-        <label>Stock tracking<select name="stockTracking"><option value="0" ${edit.stock_tracking ? "" : "selected"}>Off</option><option value="1" ${edit.stock_tracking ? "selected" : ""}>On</option></select></label>
-        <label>Exact stock count<input name="stockCount" type="number" value="${escapeHtml(edit.stock_count ?? "")}"></label>
-        <label>Low stock threshold<input name="stockLowThreshold" type="number" value="${escapeHtml(edit.stock_low_threshold ?? 5)}"></label>
-        <label>Stock display mode ${helpIcon("The exact stock count is stored privately. Customers can see a friendly availability message instead.")}<select name="stockDisplayMode">${["friendly", "hidden", "exact"].map((value) => `<option value="${value}" ${(edit.stock_display_mode || "friendly") === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
-        <label>Stock source<select name="stockSource">${["manual", "marketplace", "unknown"].map((value) => `<option value="${value}" ${(edit.stock_source || "manual") === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
-        <label>Color options<input name="colorOptions" value="${escapeHtml(edit.color_options || "")}"></label>
-        <label class="wide">Option notes<textarea name="optionNotes">${escapeHtml(edit.option_notes || "")}</textarea></label>
-        <label class="wide">Short description<textarea name="shortDescription">${escapeHtml(edit.short_description || "")}</textarea></label>
-        <label class="wide">Long description<textarea name="longDescription">${escapeHtml(edit.long_description || "")}</textarea></label>
-        <label>Status<select name="status"><option value="draft" ${edit.status !== "published" ? "selected" : ""}>Draft</option><option value="published" ${edit.status === "published" ? "selected" : ""}>Published</option></select></label>
-        <label class="check-row"><input name="featured" type="checkbox" ${edit.featured ? "checked" : ""}> Featured</label>
-        <div class="wide"><strong>Product gallery images</strong>${checkboxes("galleryFileIds", state.files, editFileIds("gallery"))}</div>
-        <div class="wide"><strong>Description images</strong>${checkboxes("descriptionFileIds", state.files, editFileIds("description"))}</div>
-        <div class="wide"><strong>App/setup screenshots</strong>${checkboxes("setupFileIds", state.files, editFileIds("setup"))}</div>
-        <div class="wide"><strong>Software Bundles</strong>${checkboxes("supportPackIds", state.packs, editSupportPackIds)}</div>
-        <div class="wide"><strong>Manual related products</strong>${checkboxes("relatedProductIds", state.products.filter((product) => product.id !== edit.id), editRelatedProductIds)}</div>
+        <fieldset class="wide form-section">
+          <legend>Basics</legend>
+          <div class="form-grid">
+            <label>Name<input name="name" required value="${escapeHtml(edit.name || "")}"></label>
+            <label>SKU<input name="sku" value="${escapeHtml(edit.sku || "")}"></label>
+            <label>Version indicator<input name="versionLabel" value="${escapeHtml(edit.version_label || "")}"></label>
+            <label>Category<select name="categoryId"><option value="">None</option>${optionList(state.categories, edit.category_id ? [edit.category_id] : [])}</select></label>
+            <label>Sort order<input name="sortOrder" type="number" value="${escapeHtml(edit.sort_order ?? 0)}"></label>
+            <label>Publish state<select name="publishState">${[
+              ["draft", "Draft"],
+              ["ready", "Ready"],
+              ["published", "Published"],
+              ["needs_review", "Needs review"],
+              ["archived", "Archived"]
+            ].map(([value, label]) => `<option value="${value}" ${(edit.publish_state || "draft") === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+          </div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Public display</legend>
+          <div class="form-grid">
+            <label class="check-row"><input name="featured" type="checkbox" ${edit.featured ? "checked" : ""}> Featured</label>
+            <label>Color options<input name="colorOptions" value="${escapeHtml(edit.color_options || "")}"></label>
+            <label class="wide">Option notes<textarea name="optionNotes">${escapeHtml(edit.option_notes || "")}</textarea></label>
+            <label class="wide">Short description<textarea name="shortDescription">${escapeHtml(edit.short_description || "")}</textarea></label>
+          </div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Stock and availability</legend>
+          <div class="form-grid">
+            <label>Stock tracking<select name="stockTracking"><option value="0" ${edit.stock_tracking ? "" : "selected"}>Off</option><option value="1" ${edit.stock_tracking ? "selected" : ""}>On</option></select></label>
+            <label>Exact stock count<input name="stockCount" type="number" value="${escapeHtml(edit.stock_count ?? "")}"></label>
+            <label>Low stock threshold<input name="stockLowThreshold" type="number" value="${escapeHtml(edit.stock_low_threshold ?? 5)}"></label>
+            <label>Stock display mode ${helpIcon("The exact stock count is stored privately. Customers can see a friendly availability message instead.")}<select name="stockDisplayMode">${["friendly", "hidden", "exact"].map((value) => `<option value="${value}" ${(edit.stock_display_mode || "friendly") === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
+            <label>Stock source<select name="stockSource">${["manual", "marketplace", "unknown"].map((value) => `<option value="${value}" ${(edit.stock_source || "manual") === value ? "selected" : ""}>${value}</option>`).join("")}</select></label>
+          </div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Marketplace</legend>
+          <label>Marketplace product URL ${helpIcon("Link to this product's AliExpress, Alibaba, eBay, or other marketplace listing.")}<input name="marketplaceUrl" value="${escapeHtml(edit.marketplace_url || "")}"></label>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Images</legend>
+          <div><strong>Product gallery images</strong>${picker("galleryFileIds", state.files, editFileIds("gallery"), "files")}</div>
+          <div><strong>Description images</strong>${picker("descriptionFileIds", state.files, editFileIds("description"), "files")}</div>
+          <div><strong>App/setup screenshots</strong>${picker("setupFileIds", state.files, editFileIds("setup"), "files")}</div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Description</legend>
+          <label>Long description<textarea name="longDescription">${escapeHtml(edit.long_description || "")}</textarea></label>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Downloads and Software Bundles</legend>
+          ${picker("supportPackIds", state.packs, editSupportPackIds, "bundles")}
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Related products</legend>
+          ${picker("relatedProductIds", state.products.filter((product) => product.id !== edit.id), editRelatedProductIds, "products")}
+        </fieldset>
         <button type="submit">${state.editingProductId ? "Save product" : "Create product"}</button>
       </form>
     </section>
@@ -563,11 +790,12 @@ function publishView() {
   return `
     <section class="panel">
       <h2>Publish Review ${helpIcon("Review warnings, preview the site, then publish the static customer support site.")}</h2>
+      ${unpublishedNotice()}
       <p class="muted">Review warnings, open the current preview, then publish the static customer support site.</p>
       <div id="publishReview" class="list"></div>
       <div class="actions">
         <button id="publishBtn" type="button">Publish</button>
-        <a class="action-link" href="/preview/" target="_blank">Open preview</a>
+        <a class="action-link" href="/preview/" target="_blank">Open last published preview</a>
       </div>
       <pre id="publishOutput"></pre>
     </section>
@@ -688,7 +916,7 @@ function usersView() {
         <form id="inviteCreateForm" class="form-grid item">
           <h3 class="wide">Invite team member</h3>
           <label>Email<input name="email" type="email"></label>
-          <label>Label<input name="label" placeholder="Optional note"></label>
+          <label>Invite note<input name="label" placeholder="Internal note"></label>
           <label>Role<select name="role">${roleOptions()}</select></label>
           <label>Expires in hours<input name="expiresHours" type="number" value="48" min="1"></label>
           <label class="check-row"><input name="requiresApproval" type="checkbox"> Require admin approval after signup</label>
@@ -698,7 +926,7 @@ function usersView() {
         <form id="supportAccessForm" class="form-grid item">
           <h3 class="wide">Temporary support access</h3>
           <label>Email<input name="email" type="email"></label>
-          <label>Label<input name="label" value="Temporary support access"></label>
+          <label>Internal note<input name="label" value="Temporary support access"></label>
           <label>Role<select name="role">${roleOptions("Admin")}</select></label>
           <label>Invite expires in hours<input name="expiresHours" type="number" value="24" min="1"></label>
           <label>Account access hours<input name="accessHours" type="number" value="24" min="1"></label>
@@ -724,6 +952,7 @@ function usersView() {
         <h2>Current users</h2>
         <button id="reloadUsersBtn" class="secondary" type="button">Refresh</button>
       </div>
+      <div class="toolbar"><input id="userSearch" placeholder="Search users and invites" value="${escapeHtml(state.userSearch)}"></div>
       <div id="usersOutput" class="list">${renderUserList()}</div>
     </section>
     <section class="panel">
@@ -735,15 +964,19 @@ function usersView() {
 
 function renderUserList() {
   if (!state.users.length) return "<p class='muted'>No users loaded yet.</p>";
-  return state.users.map((user) => `
-    <div class="item user-row">
+  return [...state.users].sort((a, b) => {
+    if ((a.status || "active") === "pending" && (b.status || "active") !== "pending") return -1;
+    if ((a.status || "active") !== "pending" && (b.status || "active") === "pending") return 1;
+    return String(a.username).localeCompare(String(b.username));
+  }).map((user) => `
+    <div class="item user-row ${user.status === "pending" ? "pending-user" : ""}" data-filter-row data-search="${escapeHtml(dataText(user.username, user.email, user.role, user.status))}">
       <div>
         <h3>${escapeHtml(user.username)} <span class="pill">${escapeHtml(user.role)}</span> <span class="pill">${escapeHtml(user.status || "active")}</span></h3>
         <p class="muted">${escapeHtml(user.email || "No email")} - Last login: ${escapeHtml(user.last_login_at || "Never")}</p>
         ${user.support_access_expires_at ? `<p class="muted">Temporary support access expires ${escapeHtml(user.support_access_expires_at)}</p>` : ""}
       </div>
       <div class="actions">
-        ${user.status === "pending" ? `<button type="button" data-approve-user="${user.id}">Approve</button>` : ""}
+        ${user.status === "pending" ? `<button class="approve" type="button" data-approve-user="${user.id}">Approve user</button>` : ""}
         <button class="secondary" type="button" data-reset-user="${user.id}">Reset password</button>
         ${user.status !== "disabled" ? `<button class="danger" type="button" data-disable-user="${user.id}">Disable</button>` : ""}
       </div>
@@ -755,7 +988,7 @@ function renderUserList() {
 function renderInviteList() {
   if (!state.invites.length) return "<p class='muted'>No invites loaded yet.</p>";
   return state.invites.map((invite) => `
-    <div class="item">
+    <div class="item" data-filter-row data-search="${escapeHtml(dataText(invite.label, invite.email, invite.role, invite.status))}">
       <h3>${escapeHtml(invite.label || invite.email || "Invite")} <span class="pill">${escapeHtml(invite.role)}</span> <span class="pill">${escapeHtml(invite.status || "open")}</span></h3>
       <p class="muted">${escapeHtml(invite.email || "No email")} - Expires ${escapeHtml(invite.expires_at)}</p>
       <p class="muted">Created ${escapeHtml(invite.created_at)}${invite.created_by_username ? ` by ${escapeHtml(invite.created_by_username)}` : ""}${invite.accepted_username ? ` - Accepted by ${escapeHtml(invite.accepted_username)}` : ""}</p>
@@ -776,6 +1009,11 @@ async function loadUsersAndInvites() {
   const invitesOutput = document.querySelector("#invitesOutput");
   if (usersOutput) usersOutput.innerHTML = renderUserList();
   if (invitesOutput) invitesOutput.innerHTML = renderInviteList();
+  const userSearch = document.querySelector("#userSearch");
+  if (userSearch) {
+    filterRows(usersOutput || document, userSearch);
+    filterRows(invitesOutput || document, userSearch);
+  }
   bindUserActionButtons();
 }
 
@@ -835,6 +1073,7 @@ function bindUserActionButtons() {
       const result = await api(`/api/users/${button.dataset.resetUser}/password-reset`, { method: "POST", body: {} });
       const target = document.querySelector(`#userResult-${button.dataset.resetUser}`);
       if (target) target.innerHTML = linkResult("Password reset link", result.resetUrl);
+      if (target) bindCopyButtons(target);
       setStatus("Password reset link generated.");
     });
   });
@@ -866,6 +1105,7 @@ function bindTabEvents(content) {
   const handlers = {
     sampleBtn: async () => {
       await api("/api/sample-data", { method: "POST", body: {} });
+      markUnpublishedChanges();
       await loadData();
       renderAdmin();
       setStatus("Sample data created.");
@@ -875,6 +1115,7 @@ function bindTabEvents(content) {
       output.textContent = "Publishing...";
       const result = await api("/api/publish", { method: "POST", body: {} });
       output.textContent = result.output || result.message || "Published.";
+      clearUnpublishedChanges();
       await renderPublishReview();
     },
     loadAnalyticsBtn: async () => {
@@ -913,11 +1154,38 @@ function bindTabEvents(content) {
     if (element) element.addEventListener("click", () => handler().catch((error) => setStatus(error.message, true)));
   }
 
-  content.querySelectorAll("[data-copy-value]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(button.dataset.copyValue || "");
-      setStatus("Link copied.");
+  bindCopyButtons(content);
+
+  content.querySelectorAll("[data-picker]").forEach((pickerEl) => {
+    const search = pickerEl.querySelector("[data-picker-search]");
+    const count = pickerEl.querySelector("[data-picker-count]");
+    const update = () => {
+      const query = String(search?.value || "").trim().toLowerCase();
+      let selected = 0;
+      pickerEl.querySelectorAll("[data-picker-row]").forEach((row) => {
+        const checked = row.querySelector("input[type='checkbox']")?.checked;
+        if (checked) selected += 1;
+        const matches = String(row.dataset.search || "").toLowerCase().includes(query);
+        row.classList.toggle("hidden", Boolean(query) && !matches && !checked);
+        row.classList.toggle("picker-selected", Boolean(checked));
+      });
+      if (count) count.textContent = `${selected} selected`;
+    };
+    search?.addEventListener("input", update);
+    pickerEl.addEventListener("change", update);
+    pickerEl.querySelector("[data-picker-select-visible]")?.addEventListener("click", () => {
+      pickerEl.querySelectorAll("[data-picker-row]:not(.hidden) input[type='checkbox']").forEach((input) => {
+        input.checked = true;
+      });
+      update();
     });
+    pickerEl.querySelector("[data-picker-clear]")?.addEventListener("click", () => {
+      pickerEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
+        input.checked = false;
+      });
+      update();
+    });
+    update();
   });
 
   const contactMethodForm = content.querySelector("#contactMethodForm");
@@ -1042,6 +1310,7 @@ function bindTabEvents(content) {
       settingsForm.append(hidden);
     }
     await api("/api/settings", { method: "PUT", body: new FormData(settingsForm) });
+    markUnpublishedChanges();
     await loadData();
     renderAdmin();
     setStatus("Settings saved.");
@@ -1072,19 +1341,93 @@ function bindTabEvents(content) {
   const productSearch = content.querySelector("#productSearch");
   if (productSearch) productSearch.addEventListener("input", (event) => {
     state.productSearch = event.target.value;
-    renderAdmin();
   });
+  bindLiveFilter(productSearch, content.querySelector("#productList"));
 
   const downloadSearch = content.querySelector("#downloadSearch");
   if (downloadSearch) downloadSearch.addEventListener("input", (event) => {
     state.downloadSearch = event.target.value;
-    renderAdmin();
   });
+  bindLiveFilter(downloadSearch, content.querySelector("#downloadList"));
+
+  const mediaSearch = content.querySelector("#mediaSearch");
+  if (mediaSearch) mediaSearch.addEventListener("input", (event) => {
+    state.mediaSearch = event.target.value;
+  });
+  const applyMediaFilter = () => {
+    const list = content.querySelector("#mediaList");
+    const query = String(mediaSearch?.value || "").trim().toLowerCase();
+    list?.querySelectorAll("[data-filter-row]").forEach((row) => {
+      const matchesText = !query || String(row.dataset.search || "").toLowerCase().includes(query);
+      const matchesKind = state.mediaFilter === "all" || row.dataset.kind === state.mediaFilter;
+      row.classList.toggle("hidden", !matchesText || !matchesKind);
+    });
+  };
+  content.querySelectorAll("[data-media-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.mediaFilter = button.dataset.mediaFilter;
+      content.querySelectorAll("[data-media-filter]").forEach((item) => item.classList.toggle("active", item === button));
+      applyMediaFilter();
+    });
+  });
+  mediaSearch?.addEventListener("input", applyMediaFilter);
+  applyMediaFilter();
 
   const bundleSearch = content.querySelector("#bundleSearch");
   if (bundleSearch) bundleSearch.addEventListener("input", (event) => {
     state.bundleSearch = event.target.value;
+  });
+  bindLiveFilter(bundleSearch, content.querySelector("#bundleList"));
+
+  const userSearch = content.querySelector("#userSearch");
+  if (userSearch) userSearch.addEventListener("input", (event) => {
+    state.userSearch = event.target.value;
+    filterRows(content.querySelector("#usersOutput") || content, userSearch);
+    filterRows(content.querySelector("#invitesOutput") || content, userSearch);
+  });
+  if (userSearch) {
+    filterRows(content.querySelector("#usersOutput") || content, userSearch);
+    filterRows(content.querySelector("#invitesOutput") || content, userSearch);
+  }
+
+  const openDownloadEditor = (id = null) => {
+    state.selectedDownloadId = id ? Number(id) : null;
+    state.showDownloadEditor = true;
     renderAdmin();
+  };
+  const newDownloadBtn = content.querySelector("#newDownloadBtn");
+  if (newDownloadBtn) newDownloadBtn.addEventListener("click", () => openDownloadEditor(null));
+  const closeDownloadEditorBtn = content.querySelector("#closeDownloadEditorBtn");
+  if (closeDownloadEditorBtn) closeDownloadEditorBtn.addEventListener("click", () => {
+    state.showDownloadEditor = false;
+    state.selectedDownloadId = null;
+    renderAdmin();
+  });
+  content.querySelectorAll("[data-edit-download]").forEach((element) => {
+    element.addEventListener("click", (event) => {
+      if (event.target.closest("a") || event.target.closest("[data-add-version]") || event.target.closest("[data-archive-download]")) return;
+      openDownloadEditor(element.dataset.editDownload);
+    });
+  });
+  content.querySelectorAll("[data-add-version]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDownloadEditor(button.dataset.addVersion);
+    });
+  });
+  content.querySelectorAll("[data-archive-download]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await api(`/api/downloads/${button.dataset.archiveDownload}/archive`, { method: "POST", body: {} });
+      markUnpublishedChanges();
+      if (Number(state.selectedDownloadId) === Number(button.dataset.archiveDownload)) {
+        state.selectedDownloadId = null;
+        state.showDownloadEditor = false;
+      }
+      await loadData();
+      renderAdmin();
+      setStatus("Download archived.");
+    });
   });
 
   const newProductBtn = content.querySelector("#newProductBtn");
@@ -1126,6 +1469,7 @@ function bindTabEvents(content) {
   if (categoryForm) categoryForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     await api("/api/categories", { method: "POST", body: formValues(categoryForm) });
+    markUnpublishedChanges();
     await loadData();
     renderAdmin();
     setStatus("Category created.");
@@ -1135,6 +1479,7 @@ function bindTabEvents(content) {
   if (fileForm) fileForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     await api("/api/files/upload", { method: "POST", body: new FormData(fileForm) });
+    markUnpublishedChanges();
     await loadData();
     renderAdmin();
     setStatus("File uploaded.");
@@ -1143,22 +1488,31 @@ function bindTabEvents(content) {
   const downloadForm = content.querySelector("#downloadForm");
   if (downloadForm) downloadForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await api("/api/downloads", { method: "POST", body: formValues(downloadForm) });
+    const values = formValues(downloadForm);
+    values.sortOrder = values.sortOrder === "" ? 0 : Number(values.sortOrder || 0);
+    const wasEditing = Boolean(state.selectedDownloadId);
+    const result = await api(state.selectedDownloadId ? `/api/downloads/${state.selectedDownloadId}` : "/api/downloads", {
+      method: state.selectedDownloadId ? "PUT" : "POST",
+      body: values
+    });
+    if (result.download?.id) state.selectedDownloadId = result.download.id;
+    state.showDownloadEditor = true;
+    markUnpublishedChanges();
     await loadData();
     renderAdmin();
-    setStatus("Download object created.");
+    setStatus(wasEditing ? "Download saved." : "Download object created.");
   });
 
   const versionForm = content.querySelector("#versionForm");
   if (versionForm) versionForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const values = formValues(versionForm);
-    const downloadId = Number(values.downloadId);
-    delete values.downloadId;
+    const downloadId = Number(versionForm.dataset.downloadId || state.selectedDownloadId);
     values.fileId = values.fileId ? Number(values.fileId) : null;
     values.isLatest = Boolean(versionForm.querySelector("[name='isLatest']").checked);
     values.deprecated = Boolean(versionForm.querySelector("[name='deprecated']").checked);
     await api(`/api/downloads/${downloadId}/versions`, { method: "POST", body: values });
+    markUnpublishedChanges();
     await loadData();
     renderAdmin();
     setStatus("Version added.");
@@ -1171,6 +1525,7 @@ function bindTabEvents(content) {
     values.downloadIds = checkedNumbers(packForm, "downloadIds");
     values.autoGenerateZip = Boolean(packForm.querySelector("[name='autoGenerateZip']").checked);
     await api("/api/software-bundles", { method: "POST", body: values });
+    markUnpublishedChanges();
     await loadData();
     renderAdmin();
     setStatus("Software Bundle created.");
@@ -1186,6 +1541,7 @@ function bindTabEvents(content) {
     values.stockCount = values.stockCount === "" ? null : Number(values.stockCount);
     values.stockLowThreshold = values.stockLowThreshold === "" ? 5 : Number(values.stockLowThreshold);
     values.sortOrder = values.sortOrder === "" ? 0 : Number(values.sortOrder);
+    values.status = values.publishState === "published" ? "published" : "draft";
     values.galleryFileIds = checkedNumbers(productForm, "galleryFileIds");
     values.descriptionFileIds = checkedNumbers(productForm, "descriptionFileIds");
     values.setupFileIds = checkedNumbers(productForm, "setupFileIds");
@@ -1193,6 +1549,7 @@ function bindTabEvents(content) {
     values.relatedProductIds = checkedNumbers(productForm, "relatedProductIds");
     const path = state.editingProductId ? `/api/products/${state.editingProductId}` : "/api/products";
     await api(path, { method: state.editingProductId ? "PUT" : "POST", body: values });
+    markUnpublishedChanges();
     state.showProductForm = false;
     state.editingProductId = null;
     state.editingProduct = null;
@@ -1208,7 +1565,9 @@ function bindTabEvents(content) {
     values.expiresHours = Number(values.expiresHours || 48);
     values.requiresApproval = Boolean(inviteCreateForm.querySelector("[name='requiresApproval']").checked);
     const invite = await api("/api/invites", { method: "POST", body: values });
-    document.querySelector("#inviteResult").innerHTML = linkResult("Invite URL", invite.inviteUrl);
+    const target = document.querySelector("#inviteResult");
+    target.innerHTML = linkResult("Invite URL", invite.inviteUrl);
+    bindCopyButtons(target);
     await loadUsersAndInvites();
   });
 
@@ -1220,7 +1579,9 @@ function bindTabEvents(content) {
     values.accessHours = Number(values.accessHours || 24);
     values.requiresApproval = Boolean(supportAccessForm.querySelector("[name='requiresApproval']").checked);
     const invite = await api("/api/support-access", { method: "POST", body: values });
-    document.querySelector("#supportAccessResult").innerHTML = linkResult("Temporary support link", invite.inviteUrl);
+    const target = document.querySelector("#supportAccessResult");
+    target.innerHTML = linkResult("Temporary support link", invite.inviteUrl);
+    bindCopyButtons(target);
     await loadUsersAndInvites();
   });
 

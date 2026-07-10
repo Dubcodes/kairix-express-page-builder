@@ -854,6 +854,42 @@ app.post("/api/downloads", requirePermission("write"), (req, res) => {
   res.json({ download: db.prepare("SELECT * FROM download_objects WHERE id = ?").get(result.lastInsertRowid) });
 });
 
+app.put("/api/downloads/:id", requirePermission("write"), (req, res) => {
+  const id = Number(req.params.id);
+  const current = db.prepare("SELECT * FROM download_objects WHERE id = ?").get(id);
+  if (!current) return res.status(404).json({ error: "Download object not found" });
+  const body = z.object({
+    name: z.string().min(2),
+    type: z.enum(["Android", "iOS", "Windows", "Mac", "Firmware", "Manual", "Other"]),
+    shortDescription: z.string().optional(),
+    externalUrl: z.string().optional(),
+    displayGroup: z.string().optional(),
+    sortOrder: z.number().optional()
+  }).parse(req.body);
+  const slug = body.name === current.name ? current.slug : makeSlug(body.name, "download_objects", id);
+  db.prepare(`
+    UPDATE download_objects SET
+      name = ?, slug = ?, type = ?, short_description = ?, external_url = ?, display_group = ?,
+      sort_order = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    cleanText(body.name),
+    slug,
+    body.type,
+    cleanText(body.shortDescription),
+    cleanText(body.externalUrl),
+    cleanText(body.displayGroup),
+    Number(body.sortOrder || 0),
+    id
+  );
+  res.json({ download: db.prepare("SELECT * FROM download_objects WHERE id = ?").get(id) });
+});
+
+app.post("/api/downloads/:id/archive", requirePermission("write"), (req, res) => {
+  db.prepare("UPDATE download_objects SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
 app.post("/api/downloads/:id/versions", requirePermission("files"), (req, res) => {
   const body = z.object({
     versionNumber: z.string().min(1),
