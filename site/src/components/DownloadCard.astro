@@ -2,12 +2,16 @@
 import { assetPath, sitePath } from "../lib/content.js";
 const { download } = Astro.props;
 const latest = download.latest || download.versions?.[0];
+const searchText = `${download.name} ${download.type} ${latest?.version_number || ""} ${download.short_description || ""}`.toLowerCase();
 ---
-<article class="card">
-  <h3>{download.name}</h3>
-  <p><span class="pill">{download.type}</span> {latest?.version_number && <span class="pill">Latest {latest.version_number}</span>}</p>
-  <p>{download.short_description}</p>
-  <div class="button-row">
+<article class="card download-card" data-download-item data-type={download.type} data-search={searchText}>
+  <div class="download-card-main">
+    <p class="eyebrow">{download.type}</p>
+    <h3>{download.name}</h3>
+    {latest?.version_number && <p class="muted">Latest version {latest.version_number}</p>}
+    <p>{download.short_description}</p>
+  </div>
+  <div class="button-row download-actions">
     {latest?.download_url && <a class="button" href={assetPath(latest.download_url)} data-track-download={download.id}>Download/open</a>}
     <a class="button secondary" href={sitePath(`/downloads/${download.slug}/`)}>Version history</a>
   </div>

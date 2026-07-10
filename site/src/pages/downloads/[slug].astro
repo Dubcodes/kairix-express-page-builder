@@ -19,25 +19,36 @@ const previousVersions = (download.versions || []).filter((version) => !latest |
     {latest && (
       <section class="section inner">
         <h2>Current version</h2>
-        <article class="card">
-          <h3>{latest.version_number}</h3>
-          <p class="muted">{download.type} {latest.release_date ? `- ${latest.release_date}` : ""}</p>
-          <div set:html={latest.release_notes}></div>
-          {latest.download_url && <a class="button" href={assetPath(latest.download_url)} data-track-download={download.id}>Download/open</a>}
+        <article class="card version-card current-version">
+          <div>
+            <p class="eyebrow">Current {download.type}</p>
+            <h3>{latest.version_number}</h3>
+            <p class="muted">{latest.release_date ? `Released ${latest.release_date}` : "No release date"} {latest.file_size ? `- ${latest.file_size}` : ""}</p>
+            <div class="release-notes" set:html={latest.release_notes}></div>
+            {latest.checksum && <p class="muted checksum">Checksum: {latest.checksum}</p>}
+          </div>
+          <div class="button-row download-actions">
+            {latest.download_url && <a class="button" href={assetPath(latest.download_url)} data-track-download={download.id}>Download/open</a>}
+          </div>
         </article>
       </section>
     )}
     <section class="section inner">
       <h2>Previous versions</h2>
-      <div class="grid">
+      <div class="download-list">
         {previousVersions.map((version) => (
-          <article class="card">
-            <h3>{version.version_number} {version.deprecated ? <span class="pill">Deprecated</span> : null}</h3>
-            <p class="muted">{download.type} {version.release_date ? `- ${version.release_date}` : ""} {version.file_size ? `- ${version.file_size}` : ""}</p>
-            {version.warning_text && <p style="color: var(--warn);">{version.warning_text}</p>}
-            <div set:html={version.release_notes}></div>
-            {version.checksum && <p class="muted">Checksum: {version.checksum}</p>}
-            {version.download_url && <a class="button secondary" href={assetPath(version.download_url)} data-track-download={download.id}>Download/open</a>}
+          <article class="card version-card">
+            <div>
+              <p class="eyebrow">{download.type}</p>
+              <h3>{version.version_number} {version.deprecated ? <span class="pill">Deprecated</span> : null}</h3>
+              <p class="muted">{version.release_date ? `Released ${version.release_date}` : "No release date"} {version.file_size ? `- ${version.file_size}` : ""}</p>
+              {version.warning_text && <p class="warning-text">{version.warning_text}</p>}
+              <div class="release-notes" set:html={version.release_notes}></div>
+              {version.checksum && <p class="muted checksum">Checksum: {version.checksum}</p>}
+            </div>
+            <div class="button-row download-actions">
+              {version.download_url && <a class="button secondary" href={assetPath(version.download_url)} data-track-download={download.id}>Download/open</a>}
+            </div>
           </article>
         ))}
         {!previousVersions.length && <p class="muted">No previous versions yet.</p>}

@@ -1,7 +1,8 @@
 ---
 import PublicLayout from "../../layouts/PublicLayout.astro";
 import DownloadCard from "../../components/DownloadCard.astro";
-import { assetPath, content, downloadsByType, sitePath, trackScript } from "../../lib/content.js";
+import { assetPath, content, sitePath, trackScript } from "../../lib/content.js";
+const downloadTypes = ["All", "Android", "iOS", "Windows", "Firmware", "Manual", "Other"];
 ---
 <PublicLayout title="Downloads">
   <main>
@@ -12,13 +13,16 @@ import { assetPath, content, downloadsByType, sitePath, trackScript } from "../.
     {content.softwareBundles?.length > 0 && (
       <section class="section inner">
         <h2>Software Bundles</h2>
-        <div class="grid">
+        <div class="download-list">
           {content.softwareBundles.map((bundle) => (
-            <article class="card">
-              <h3>{bundle.name}</h3>
-              <p>{bundle.description}</p>
-              <p class="muted">Includes {bundle.downloads?.length || 0} item(s)</p>
-              <div class="button-row">
+            <article class="card download-card bundle-card">
+              <div class="download-card-main">
+                <p class="eyebrow">Software Bundle</p>
+                <h3>{bundle.name}</h3>
+                <p>{bundle.description}</p>
+                <p class="muted">Includes {bundle.downloads?.length || 0} item(s)</p>
+              </div>
+              <div class="button-row download-actions">
                 {bundle.bundle_url && <a class="button" href={assetPath(bundle.bundle_url)} data-track-software-bundle={bundle.id} title="Download software bundle" aria-label={`Download ${bundle.name}`}>Download bundle</a>}
                 {bundle.downloads?.[0] && <a class="button secondary" href={sitePath(`/downloads/${bundle.downloads[0].slug}/`)}>View included downloads</a>}
               </div>
@@ -27,12 +31,54 @@ import { assetPath, content, downloadsByType, sitePath, trackScript } from "../.
         </div>
       </section>
     )}
-    {downloadsByType().map((group) => (
-      <section class="section inner">
-        <h2>{group.type}</h2>
-        <div class="grid">{group.downloads.map((download) => <DownloadCard download={download} />)}</div>
-      </section>
-    ))}
+    <section class="section inner">
+      <div class="section-heading-public">
+        <div>
+          <h2>All downloads</h2>
+          <p class="muted">Find the latest app, firmware, utility or manual by product support object.</p>
+        </div>
+      </div>
+      <div class="filter-panel">
+        <label>Search downloads<input id="downloadSearch" type="search" placeholder="Search by name, type or version"></label>
+        <div class="type-filter" aria-label="Filter by type">
+          {downloadTypes.map((type) => <button class="button secondary" type="button" data-download-type={type}>{type}</button>)}
+        </div>
+      </div>
+      <div id="downloadList" class="download-list">
+        {content.downloads.map((download) => <DownloadCard download={download} />)}
+      </div>
+      <p id="downloadEmpty" class="muted" hidden>No downloads match that filter.</p>
+    </section>
   </main>
   <script is:inline set:html={trackScript("page_view")} />
+  <script is:inline>
+    var search = document.querySelector("#downloadSearch");
+    var buttons = Array.from(document.querySelectorAll("[data-download-type]"));
+    var rows = Array.from(document.querySelectorAll("[data-download-item]"));
+    var empty = document.querySelector("#downloadEmpty");
+    var activeType = "All";
+    function applyDownloadFilters() {
+      var query = (search && search.value || "").trim().toLowerCase();
+      var visible = 0;
+      rows.forEach(function(row) {
+        var matchesType = activeType === "All" || row.dataset.type === activeType;
+        var matchesSearch = !query || (row.dataset.search || "").includes(query);
+        var show = matchesType && matchesSearch;
+        row.hidden = !show;
+        if (show) visible += 1;
+      });
+      if (empty) empty.hidden = visible > 0;
+      buttons.forEach(function(button) {
+        button.classList.toggle("active-filter", button.dataset.downloadType === activeType);
+      });
+    }
+    if (search) search.addEventListener("input", applyDownloadFilters);
+    buttons.forEach(function(button) {
+      button.addEventListener("click", function() {
+        activeType = button.dataset.downloadType || "All";
+        applyDownloadFilters();
+      });
+    });
+    applyDownloadFilters();
+  </script>
 </PublicLayout>

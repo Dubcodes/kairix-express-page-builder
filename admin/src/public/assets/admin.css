@@ -245,6 +245,7 @@ textarea {
 textarea {
   min-height: 96px;
   resize: vertical;
+  line-height: 1.5;
 }
 
 .wide {
@@ -772,6 +773,55 @@ pre {
   color: var(--text);
 }
 
+.form-actions {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.support-settings-form {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.contact-methods-panel {
+  background: #fff;
+}
+
+.contact-method-form {
+  grid-template-columns: minmax(160px, 1fr) 150px minmax(220px, 1.5fr) 120px;
+  align-items: end;
+  margin-top: 10px;
+}
+
+.contact-method-list {
+  margin-top: 12px;
+}
+
+.contact-method-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px auto;
+  gap: 10px;
+  align-items: center;
+  background: #fff;
+}
+
+.contact-method-edit {
+  grid-template-columns: minmax(160px, 1fr) 140px minmax(220px, 1.5fr) 90px auto;
+}
+
+.contact-method-main {
+  min-width: 0;
+}
+
+.contact-method-main p {
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   .topbar,
   .session {
@@ -787,6 +837,9 @@ pre {
   .download-row,
   .user-row,
   .link-result,
+  .contact-method-row,
+  .contact-method-edit,
+  .contact-method-form,
   .mini-row {
     grid-template-columns: 1fr;
     align-items: stretch;

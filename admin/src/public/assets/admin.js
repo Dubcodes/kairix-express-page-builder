@@ -31,7 +31,8 @@ const state = {
   showDownloadEditor: false,
   showProductForm: false,
   editingProductId: null,
-  editingProduct: null
+  editingProduct: null,
+  editingContactMethodId: null
 };
 
 const tabs = [
@@ -317,6 +318,29 @@ function escapeHtml(value) {
   })[char]);
 }
 
+function decodeEntities(value) {
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = String(value || "");
+  return textarea.value;
+}
+
+function richHtmlToPlainText(value) {
+  return decodeEntities(String(value || "")
+    .replace(/<\/p>\s*<p[^>]*>/gi, "\n\n")
+    .replace(/<p[^>]*>/gi, "")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/li>\s*<li[^>]*>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "- ")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim());
+}
+
+function contactTypeOptions(selected = "link") {
+  return ["link", "email", "phone", "marketplace"].map((type) => `<option value="${type}" ${type === selected ? "selected" : ""}>${type}</option>`).join("");
+}
+
 function pageManagerTitle(settings = {}) {
   const brandName = String(settings.brandName || "").trim() || "Kairix";
   return `${brandName} Page Manager`;
@@ -534,29 +558,51 @@ function supportSettingsView() {
     <section class="panel" id="supportContactSection">
       <h2>Support/contact info</h2>
       <p class="muted">Show customers where to get product help. For order or payment issues, direct them back to the marketplace order page.</p>
-      <form id="settingsForm" class="form-grid">
+      <form id="settingsForm" class="form-grid support-settings-form">
         <label>Support email<input name="supportEmail" type="email" value="${escapeHtml(s.supportEmail || "")}"></label>
         <label>Support link<input name="supportLink" value="${escapeHtml(s.supportLink || "")}"></label>
         <label>Marketplace/store link<input name="marketplaceUrl" value="${escapeHtml(s.marketplaceUrl || "")}"></label>
         <label class="check-row"><input name="contactFormEnabled" type="checkbox" ${s.contactFormEnabled === "on" || s.contactFormEnabled === "true" ? "checked" : ""}> Enable public contact form</label>
-        <button type="submit">Save support info</button>
+        <div class="wide form-actions"><button type="submit">Save support info</button></div>
       </form>
-      <div class="item">
+      <div class="item contact-methods-panel">
         <h3>Public contact rows</h3>
         <p class="muted">Add the seller-facing support options that should appear on the public support portal.</p>
-        <form id="contactMethodForm" class="form-grid">
+        <form id="contactMethodForm" class="form-grid contact-method-form">
           <label>Label<input name="label" placeholder="WhatsApp support" required></label>
           <label>Type<select name="type"><option value="link">Link</option><option value="email">Email</option><option value="phone">Phone</option><option value="marketplace">Marketplace</option></select></label>
-          <label class="wide">Value<input name="value" placeholder="https:// or email/phone" required></label>
+          <label>Value<input name="value" placeholder="https:// or email/phone" required></label>
           <label>Sort order<input name="sortOrder" type="number" value="0"></label>
-          <button type="submit">Add contact row</button>
+          <div class="wide form-actions"><button type="submit">Add contact row</button></div>
         </form>
-        <div class="list compact-list-ui">
+        <div class="list compact-list-ui contact-method-list">
           ${state.contactMethods.map((method) => `
-            <div class="item mini-row">
-              <div><strong>${escapeHtml(method.label)}</strong> <span class="pill">${escapeHtml(method.type)}</span><p class="muted">${escapeHtml(method.value)}</p></div>
-              <button class="secondary" type="button" data-delete-contact-method="${method.id}">Hide</button>
-            </div>
+            ${Number(state.editingContactMethodId) === Number(method.id) ? `
+              <form class="item contact-method-row contact-method-edit" data-contact-edit-form="${method.id}">
+                <label>Label<input name="label" value="${escapeHtml(method.label)}" required></label>
+                <label>Type<select name="type">${contactTypeOptions(method.type)}</select></label>
+                <label>Value<input name="value" value="${escapeHtml(method.value)}" required></label>
+                <label>Sort<input name="sortOrder" type="number" value="${escapeHtml(method.sort_order ?? 0)}"></label>
+                <div class="actions">
+                  <button type="submit">Save</button>
+                  <button class="secondary" type="button" data-cancel-contact-edit>Cancel</button>
+                  <button class="secondary" type="button" data-delete-contact-method="${method.id}">Hide</button>
+                </div>
+              </form>
+            ` : `
+              <div class="item contact-method-row">
+                <div class="contact-method-main" title="${escapeHtml(method.value)}">
+                  <strong>${escapeHtml(method.label)}</strong>
+                  <span class="pill">${escapeHtml(method.type)}</span>
+                  <p class="muted">${escapeHtml(method.value)}</p>
+                </div>
+                <p class="muted">Sort ${escapeHtml(method.sort_order ?? 0)}</p>
+                <div class="actions">
+                  <button class="secondary" type="button" data-edit-contact-method="${method.id}">Edit</button>
+                  <button class="secondary" type="button" data-delete-contact-method="${method.id}">Hide</button>
+                </div>
+              </div>
+            `}
           `).join("") || "<p class='muted'>No extra contact rows yet. Email/link/store fallback still works.</p>"}
         </div>
       </div>
@@ -683,7 +729,8 @@ function downloadsView() {
             <label>Release date<input name="releaseDate" type="date"></label>
             <label>Uploaded file<select name="fileId"><option value="">None</option>${optionList(state.files)}</select></label>
             <label class="wide">External URL<input name="externalUrl"></label>
-            <label class="wide">Release notes<textarea name="releaseNotes"></textarea></label>
+            <label class="wide">Release notes<textarea name="releaseNotes" data-rich-text data-rich-original-html="" data-rich-plain-text=""></textarea></label>
+            <label class="check-row wide"><input name="releaseNotesSource" type="checkbox" data-rich-source="releaseNotes"> Edit HTML source</label>
             <label class="check-row"><input name="isLatest" type="checkbox" checked> Latest</label>
             <label class="check-row"><input name="deprecated" type="checkbox"> Deprecated</label>
             <label>Warning text<input name="warningText"></label>
@@ -798,7 +845,8 @@ function productsView() {
         </fieldset>
         <fieldset class="wide form-section">
           <legend>Description</legend>
-          <label>Long description<textarea name="longDescription">${escapeHtml(edit.long_description || "")}</textarea></label>
+          <label>Long description<textarea name="longDescription" data-rich-text data-rich-original-html="${escapeHtml(edit.long_description || "")}" data-rich-plain-text="${escapeHtml(richHtmlToPlainText(edit.long_description || ""))}">${escapeHtml(richHtmlToPlainText(edit.long_description || ""))}</textarea></label>
+          <label class="check-row"><input name="longDescriptionSource" type="checkbox" data-rich-source="longDescription"> Edit HTML source</label>
         </fieldset>
         <fieldset class="wide form-section">
           <legend>Downloads and Software Bundles</legend>
@@ -1285,6 +1333,7 @@ function bindTabEvents(content) {
         ${buildLogDetails(result.output || result.message || "")}
       `;
       clearUnpublishedChanges();
+      document.querySelectorAll("[data-open-publish]").forEach((notice) => notice.remove());
       await renderPublishReview();
     },
     loadAnalyticsBtn: async () => {
@@ -1337,6 +1386,16 @@ function bindTabEvents(content) {
     button.addEventListener("click", () => openPublishReview());
   });
 
+  content.querySelectorAll("[data-rich-source]").forEach((checkbox) => {
+    const textarea = content.querySelector(`textarea[name="${checkbox.dataset.richSource}"]`);
+    if (!textarea) return;
+    checkbox.addEventListener("change", () => {
+      textarea.value = checkbox.checked
+        ? textarea.dataset.richOriginalHtml || textarea.value
+        : textarea.dataset.richPlainText || richHtmlToPlainText(textarea.value);
+    });
+  });
+
   content.querySelectorAll("[data-picker]").forEach((pickerEl) => {
     const search = pickerEl.querySelector("[data-picker-search]");
     const count = pickerEl.querySelector("[data-picker-count]");
@@ -1375,14 +1434,45 @@ function bindTabEvents(content) {
     const values = formValues(contactMethodForm);
     values.sortOrder = Number(values.sortOrder || 0);
     await api("/api/contact-methods", { method: "POST", body: values });
+    markUnpublishedChanges();
     await loadData();
     renderAdmin();
     setStatus("Contact row added.");
   });
 
+  content.querySelectorAll("[data-edit-contact-method]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editingContactMethodId = Number(button.dataset.editContactMethod);
+      renderAdmin();
+    });
+  });
+
+  content.querySelectorAll("[data-cancel-contact-edit]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editingContactMethodId = null;
+      renderAdmin();
+    });
+  });
+
+  content.querySelectorAll("[data-contact-edit-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = formValues(form);
+      values.sortOrder = Number(values.sortOrder || 0);
+      await api(`/api/contact-methods/${form.dataset.contactEditForm}`, { method: "PUT", body: values });
+      state.editingContactMethodId = null;
+      markUnpublishedChanges();
+      await loadData();
+      renderAdmin();
+      setStatus("Contact row updated.");
+    });
+  });
+
   content.querySelectorAll("[data-delete-contact-method]").forEach((button) => {
     button.addEventListener("click", async () => {
       await api(`/api/contact-methods/${button.dataset.deleteContactMethod}`, { method: "DELETE", body: {} });
+      if (Number(state.editingContactMethodId) === Number(button.dataset.deleteContactMethod)) state.editingContactMethodId = null;
+      markUnpublishedChanges();
       await loadData();
       renderAdmin();
       setStatus("Contact row hidden.");
@@ -1692,6 +1782,7 @@ function bindTabEvents(content) {
     values.fileId = values.fileId ? Number(values.fileId) : null;
     values.isLatest = Boolean(versionForm.querySelector("[name='isLatest']").checked);
     values.deprecated = Boolean(versionForm.querySelector("[name='deprecated']").checked);
+    values.releaseNotesMode = versionForm.querySelector("[name='releaseNotesSource']")?.checked ? "html" : "plain";
     await api(`/api/downloads/${downloadId}/versions`, { method: "POST", body: values });
     markUnpublishedChanges();
     await loadData();
@@ -1728,6 +1819,7 @@ function bindTabEvents(content) {
     values.setupFileIds = checkedNumbers(productForm, "setupFileIds");
     values.supportPackIds = checkedNumbers(productForm, "supportPackIds");
     values.relatedProductIds = checkedNumbers(productForm, "relatedProductIds");
+    values.longDescriptionMode = productForm.querySelector("[name='longDescriptionSource']")?.checked ? "html" : "plain";
     const path = state.editingProductId ? `/api/products/${state.editingProductId}` : "/api/products";
     await api(path, { method: state.editingProductId ? "PUT" : "POST", body: values });
     markUnpublishedChanges();

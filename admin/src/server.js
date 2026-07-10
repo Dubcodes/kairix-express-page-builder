@@ -149,6 +149,21 @@ function cleanRich(value) {
   });
 }
 
+function textToParagraphHtml(value) {
+  return String(value || "")
+    .split(/\n{2,}/)
+    .map((paragraph) => cleanText(paragraph).replace(/\n/g, "<br>"))
+    .filter(Boolean)
+    .map((paragraph) => `<p>${paragraph}</p>`)
+    .join("");
+}
+
+function cleanRichInput(value, mode = "plain") {
+  const raw = String(value || "");
+  if (mode === "html" || /<\/?[a-z][\s\S]*>/i.test(raw)) return cleanRich(raw);
+  return textToParagraphHtml(raw);
+}
+
 function makeSlug(name, table, currentId = null) {
   const base = slugify(name || "item", { lower: true, strict: true }) || "item";
   let slug = base;
@@ -434,6 +449,28 @@ app.post("/api/contact-methods", requirePermission("write"), (req, res) => {
   res.json({ contactMethod: db.prepare("SELECT * FROM contact_methods WHERE id = ?").get(result.lastInsertRowid) });
 });
 
+app.put("/api/contact-methods/:id", requirePermission("write"), (req, res) => {
+  const id = Number(req.params.id);
+  const current = db.prepare("SELECT * FROM contact_methods WHERE id = ?").get(id);
+  if (!current) return res.status(404).json({ error: "Contact row not found" });
+  const body = z.object({
+    label: z.string().min(1).max(80),
+    type: z.enum(["email", "link", "phone", "marketplace"]).default("link"),
+    value: z.string().min(1).max(500),
+    sortOrder: z.number().optional(),
+    visible: z.boolean().optional(),
+    enabled: z.boolean().optional()
+  }).parse(req.body);
+  const visible = body.visible ?? body.enabled ?? Boolean(current.visible);
+  db.prepare(`
+    UPDATE contact_methods
+    SET label = ?, type = ?, value = ?, sort_order = ?, visible = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(cleanText(body.label), body.type, cleanText(body.value), body.sortOrder ?? 0, visible ? 1 : 0, id);
+  audit(req, "contact_method_update", { entityType: "contact_method", entityId: id, message: `Updated contact method ${body.label}` });
+  res.json({ contactMethod: db.prepare("SELECT * FROM contact_methods WHERE id = ?").get(id) });
+});
+
 app.delete("/api/contact-methods/:id", requirePermission("write"), (req, res) => {
   db.prepare("UPDATE contact_methods SET visible = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.params.id);
   audit(req, "contact_method_hide", { entityType: "contact_method", entityId: Number(req.params.id), message: "Contact method hidden" });
@@ -695,6 +732,7 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
     marketplaceUrl: z.string().optional(),
     shortDescription: z.string().optional(),
     longDescription: z.string().optional(),
+    longDescriptionMode: z.enum(["plain", "html"]).optional(),
     status: z.enum(["draft", "published"]).default("draft"),
     publishState: z.enum(["draft", "ready", "published", "needs_review", "archived"]).optional(),
     featured: z.boolean().optional(),
@@ -727,7 +765,7 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
       body.categoryId || null,
       cleanText(body.marketplaceUrl),
       cleanText(body.shortDescription),
-      cleanRich(body.longDescription),
+      cleanRichInput(body.longDescription, body.longDescriptionMode),
       body.status,
       body.featured ? 1 : 0,
       body.publishState || body.status,
@@ -796,7 +834,7 @@ app.put("/api/products/:id", requirePermission("write"), (req, res) => {
       body.categoryId || null,
       cleanText(body.marketplaceUrl),
       cleanText(body.shortDescription),
-      cleanRich(body.longDescription),
+      cleanRichInput(body.longDescription, body.longDescriptionMode),
       body.status === "published" ? "published" : "draft",
       body.featured ? 1 : 0,
       body.publishState || body.status || "draft",
@@ -897,6 +935,7 @@ app.post("/api/downloads/:id/versions", requirePermission("files"), (req, res) =
     fileId: z.number().nullable().optional(),
     externalUrl: z.string().optional(),
     releaseNotes: z.string().optional(),
+    releaseNotesMode: z.enum(["plain", "html"]).optional(),
     isLatest: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     warningText: z.string().optional(),
@@ -917,7 +956,7 @@ app.post("/api/downloads/:id/versions", requirePermission("files"), (req, res) =
       cleanText(body.releaseDate),
       body.fileId || null,
       cleanText(body.externalUrl),
-      cleanRich(body.releaseNotes),
+      cleanRichInput(body.releaseNotes, body.releaseNotesMode),
       body.isLatest ? 1 : 0,
       body.deprecated ? 1 : 0,
       cleanText(body.warningText),

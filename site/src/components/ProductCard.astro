@@ -5,7 +5,7 @@ const image = productImage(product);
 const stock = stockLabel(product);
 ---
 <a class="card product-card-link" href={sitePath(`/products/${product.slug}/`)}>
-  {image ? <img src={image} alt={product.name} style="aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; margin-bottom: 12px;"> : <div class="placeholder-media" style="margin-bottom: 12px;">Product image</div>}
+  {image ? <img src={image} alt={product.name} style="aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 12px; background: var(--surface-alt);"> : <div class="placeholder-media" style="margin-bottom: 12px;">Product image</div>}
   <h3>{product.name}</h3>
   {product.sku && <p class="muted">SKU: {product.sku}</p>}
   {stock && <p><span class="pill" title="Availability shown by the seller">{stock}</span></p>}
