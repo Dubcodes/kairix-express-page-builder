@@ -111,7 +111,9 @@ function formatBytes(size) {
 }
 
 function isImageFile(file) {
-  return String(file.mimeType || file.mime_type || "").startsWith("image/");
+  const mime = String(file.mimeType || file.mime_type || "").toLowerCase();
+  const name = String(file.originalName || file.original_name || file.url || "").toLowerCase();
+  return mime.startsWith("image/") || /\.(svg|png|jpe?g|webp|gif)$/i.test(name);
 }
 
 function mediaKind(file) {
@@ -182,16 +184,41 @@ async function copyText(value, source) {
 }
 
 function mediaThumb(file) {
-  if (isImageFile(file)) return `<img class="media-thumb" src="${escapeHtml(file.url)}" alt="">`;
-  return `<span class="media-thumb media-thumb-icon">${escapeHtml((file.originalName || "file").split(".").pop().slice(0, 4).toUpperCase())}</span>`;
+  const name = file.originalName || file.original_name || "file";
+  const url = file.url || "#";
+  const extension = String(name).split(".").pop().slice(0, 4).toUpperCase();
+  if (isImageFile(file)) {
+    return `
+      <button class="thumb-button" type="button" data-preview-image="${escapeHtml(url)}" data-preview-title="${escapeHtml(name)}" title="Preview ${escapeHtml(name)}" aria-label="Preview ${escapeHtml(name)}">
+        <img class="media-thumb" src="${escapeHtml(url)}" alt="">
+      </button>
+    `;
+  }
+  return `<span class="media-thumb media-thumb-icon" title="${escapeHtml(name)}">${escapeHtml(extension)}</span>`;
 }
 
-function pickerMeta(row, kind) {
-  if (kind === "files") return `${mediaThumb(row)}<span><strong>${escapeHtml(row.originalName || row.original_name || `File ${row.id}`)}</strong><small>${escapeHtml(row.mimeType || row.mime_type || "")} · ${formatBytes(row.size)}</small></span><a class="action-link mini-action" href="${escapeHtml(row.url || "#")}" target="_blank" rel="noopener noreferrer">Open</a>`;
-  if (kind === "products") return `<span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.sku || "No SKU")} · ${escapeHtml(row.category_name || "No category")} · ${row.import_sync_status ? "Synced" : "Local"}</small></span>`;
-  if (kind === "downloads") return `<span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.type)} · ${escapeHtml(latestVersionLabel(row))}</small></span>`;
-  if (kind === "bundles") return `<span><strong>${escapeHtml(row.name)}</strong><small>${Number(row.downloadIds?.length || 0)} download(s) · ${row.bundle_file_id ? "ZIP generated" : row.auto_generate_zip ? "ZIP on publish" : "No ZIP"}</small></span>`;
-  return `<span><strong>${escapeHtml(row.name || row.originalName || `Item ${row.id}`)}</strong></span>`;
+function pickerIcon(label) {
+  return `<span class="media-thumb media-thumb-icon" aria-hidden="true">${escapeHtml(label)}</span>`;
+}
+
+function pickerBody(inputId, title, detail = "") {
+  return `
+    <label class="picker-main" for="${escapeHtml(inputId)}" title="${escapeHtml(title)}">
+      <strong>${escapeHtml(title)}</strong>
+      ${detail ? `<small>${escapeHtml(detail)}</small>` : ""}
+    </label>
+  `;
+}
+
+function pickerMeta(row, kind, inputId) {
+  if (kind === "files") {
+    const title = row.originalName || row.original_name || `File ${row.id}`;
+    return `${mediaThumb(row)}${pickerBody(inputId, title, `${row.mimeType || row.mime_type || ""} · ${formatBytes(row.size)}`)}<a class="action-link mini-action" href="${escapeHtml(row.url || "#")}" target="_blank" rel="noopener noreferrer">Open</a>`;
+  }
+  if (kind === "products") return `${pickerIcon("PRD")}${pickerBody(inputId, row.name, `${row.sku || "No SKU"} · ${row.category_name || "No category"} · ${row.import_sync_status ? "Synced" : "Local"}`)}<span></span>`;
+  if (kind === "downloads") return `${pickerIcon("DLD")}${pickerBody(inputId, row.name, `${row.type} · ${latestVersionLabel(row)}`)}<span></span>`;
+  if (kind === "bundles") return `${pickerIcon("BND")}${pickerBody(inputId, row.name, `${Number(row.downloadIds?.length || 0)} download(s) · ${row.bundle_file_id ? "ZIP generated" : row.auto_generate_zip ? "ZIP on publish" : "No ZIP"}`)}<span></span>`;
+  return `${pickerIcon("ITM")}${pickerBody(inputId, row.name || row.originalName || `Item ${row.id}`)}<span></span>`;
 }
 
 function pickerSearchText(row, kind) {
@@ -215,11 +242,12 @@ function picker(name, rows, selected = [], kind = "items") {
       <div class="picker-list">
         ${rows.map((row) => {
           const checked = selectedSet.has(Number(row.id));
+          const inputId = `picker-${name}-${row.id}`;
           return `
-            <label class="picker-row ${checked ? "picker-selected" : ""}" data-picker-row data-search="${escapeHtml(pickerSearchText(row, kind))}">
-              <input type="checkbox" name="${name}" value="${row.id}" ${checked ? "checked" : ""}>
-              ${pickerMeta(row, kind)}
-            </label>
+            <div class="picker-row ${checked ? "picker-selected" : ""}" data-picker-row data-search="${escapeHtml(pickerSearchText(row, kind))}">
+              <input id="${escapeHtml(inputId)}" type="checkbox" name="${name}" value="${row.id}" ${checked ? "checked" : ""}>
+              ${pickerMeta(row, kind, inputId)}
+            </div>
           `;
         }).join("") || "<p class='muted'>No items yet.</p>"}
       </div>
@@ -309,7 +337,7 @@ function hasUnpublishedChanges() {
 }
 
 function unpublishedNotice() {
-  return hasUnpublishedChanges() ? `<p class="notice">Unpublished changes - publish needed.</p>` : "";
+  return hasUnpublishedChanges() ? `<button class="notice notice-action" type="button" data-open-publish>Unpublished changes - publish needed.</button>` : "";
 }
 
 function markUnpublishedChanges() {
@@ -503,7 +531,7 @@ function brandingSettingsView() {
 function supportSettingsView() {
   const s = state.settings;
   return `
-    <section class="panel">
+    <section class="panel" id="supportContactSection">
       <h2>Support/contact info</h2>
       <p class="muted">Show customers where to get product help. For order or payment issues, direct them back to the marketplace order page.</p>
       <form id="settingsForm" class="form-grid">
@@ -592,7 +620,7 @@ function filesView() {
         ${state.files.map((file) => `
           <div class="item media-row" data-filter-row data-kind="${mediaKind(file)}" data-search="${escapeHtml(dataText(file.originalName, file.mimeType, file.size))}">
             ${mediaThumb(file)}
-            <div>
+            <div class="media-main" title="${escapeHtml(file.originalName)}">
               <h3>${escapeHtml(file.originalName)}</h3>
               <p class="muted">${escapeHtml(file.mimeType)} · ${formatBytes(file.size)}</p>
             </div>
@@ -633,7 +661,7 @@ function downloadsView() {
         </div>`).join("") || "<p class='muted'>No downloads yet.</p>"}</div>
     </section>
     ${editorDownload ? `
-      <section class="panel editor-panel" id="downloadEditor">
+      <section class="panel editor-panel" id="downloadEditor" tabindex="-1">
         <div class="section-heading">
           <h2>${editorDownload.id ? `Edit ${escapeHtml(editorDownload.name)}` : "Create download"}</h2>
           <button class="secondary" id="closeDownloadEditorBtn" type="button">Close</button>
@@ -685,7 +713,7 @@ function bundlesView() {
         <label class="check-row"><input name="autoGenerateZip" type="checkbox" checked> Auto-generate ZIP during publish</label>
         <button type="submit">Create Software Bundle</button>
       </form>
-      <div id="bundleList" class="list">${state.packs.map((pack) => `<div class="item" data-filter-row data-search="${escapeHtml(dataText(pack.name, pack.description))}"><h3>${escapeHtml(pack.name)}</h3><p>${escapeHtml(pack.description || "")}</p>${supportPackIncludes(pack)}<p class="muted">ZIP: ${pack.bundle_file_id ? "Generated" : pack.auto_generate_zip ? "Will generate on publish when local files exist" : "Disabled"}</p></div>`).join("")}</div>
+      <div id="bundleList" class="list">${state.packs.map((pack) => `<div class="item" tabindex="-1" data-filter-row data-bundle-id="${pack.id}" data-search="${escapeHtml(dataText(pack.name, pack.description))}"><h3>${escapeHtml(pack.name)}</h3><p>${escapeHtml(pack.description || "")}</p>${supportPackIncludes(pack)}<p class="muted">ZIP: ${pack.bundle_file_id ? "Generated" : pack.auto_generate_zip ? "Will generate on publish when local files exist" : "Disabled"}</p></div>`).join("")}</div>
     </section>
   `;
 }
@@ -719,7 +747,7 @@ function productsView() {
           <div class="actions"><button type="button" data-edit-product="${product.id}">Edit</button><button class="secondary" type="button" data-duplicate-product="${product.id}">Duplicate</button>${product.import_sync_status ? `<button class="secondary" type="button" data-detach-aliexpress="${product.id}">Detach</button>` : ""}</div>
         </div>`).join("")}</div>
     </section>
-    <section class="panel ${state.showProductForm ? "" : "hidden"}" id="productEditor">
+    <section class="panel ${state.showProductForm ? "" : "hidden"}" id="productEditor" tabindex="-1">
       <h2>${state.editingProductId ? "Edit product" : "Create product"}</h2>
       <form id="productForm" class="form-grid">
         <fieldset class="wide form-section">
@@ -748,7 +776,7 @@ function productsView() {
             <label class="wide">Short description<textarea name="shortDescription">${escapeHtml(edit.short_description || "")}</textarea></label>
           </div>
         </fieldset>
-        <fieldset class="wide form-section">
+        <fieldset class="wide form-section" id="productStockSection" tabindex="-1">
           <legend>Stock and availability</legend>
           <div class="form-grid">
             <label>Stock tracking<select name="stockTracking"><option value="0" ${edit.stock_tracking ? "" : "selected"}>Off</option><option value="1" ${edit.stock_tracking ? "selected" : ""}>On</option></select></label>
@@ -792,12 +820,12 @@ function publishView() {
       <h2>Publish Review ${helpIcon("Review warnings, preview the site, then publish the static customer support site.")}</h2>
       ${unpublishedNotice()}
       <p class="muted">Review warnings, open the current preview, then publish the static customer support site.</p>
-      <div id="publishReview" class="list"></div>
+      <div id="publishReview" class="list" tabindex="-1"></div>
       <div class="actions">
         <button id="publishBtn" type="button">Publish</button>
         <a class="action-link" href="/preview/" target="_blank">Open last published preview</a>
       </div>
-      <pre id="publishOutput"></pre>
+      <div id="publishOutput" class="publish-output" aria-live="polite"></div>
     </section>
   `;
 }
@@ -1079,26 +1107,162 @@ function bindUserActionButtons() {
   });
 }
 
+function stripAnsi(value) {
+  return String(value || "").replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
+function parseBuildSummary(value) {
+  const clean = stripAnsi(value);
+  const pagesMatch = clean.match(/(\d+)\s+page\(s\)\s+built(?:\s+in\s+([0-9.]+(?:ms|s)))?/i);
+  const durationMatch = clean.match(/\bCompleted in\s+([0-9.]+(?:ms|s))/i);
+  return {
+    pages: pagesMatch?.[1] || "",
+    duration: pagesMatch?.[2] || durationMatch?.[1] || ""
+  };
+}
+
+function looksLikeBuildLog(value) {
+  const clean = stripAnsi(value);
+  return clean.length > 260 || /\[(build|vite|types)\]|generating static routes|page\(s\) built|npm run/i.test(clean);
+}
+
+function buildLogDetails(value) {
+  const clean = stripAnsi(value).trim();
+  if (!clean || !looksLikeBuildLog(clean)) return "";
+  return `
+    <details class="log-details">
+      <summary>View build log</summary>
+      <pre class="build-log">${escapeHtml(clean)}</pre>
+    </details>
+  `;
+}
+
+function openImagePreview(url, title) {
+  document.querySelector(".image-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.className = "image-modal";
+  modal.innerHTML = `
+    <div class="image-modal-dialog" role="dialog" aria-modal="true" aria-label="${escapeHtml(title || "Image preview")}">
+      <button class="image-modal-close" type="button" aria-label="Close preview">X</button>
+      <img src="${escapeHtml(url)}" alt="${escapeHtml(title || "Image preview")}">
+      ${title ? `<p>${escapeHtml(title)}</p>` : ""}
+    </div>
+  `;
+  const close = () => {
+    document.removeEventListener("keydown", onKeydown);
+    modal.remove();
+  };
+  const onKeydown = (event) => {
+    if (event.key === "Escape") close();
+  };
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal || event.target.closest(".image-modal-close")) close();
+  });
+  document.addEventListener("keydown", onKeydown);
+  document.body.append(modal);
+  modal.querySelector(".image-modal-close")?.focus();
+}
+
+function cleanPublishMessage(event) {
+  const raw = stripAnsi(event.message || "").trim();
+  if (looksLikeBuildLog(raw)) return event.status === "success" ? "Static site published" : "Publish failed";
+  return raw || (event.status === "success" ? "Static site published" : "Publish event recorded");
+}
+
+function scrollAndFocus(selector) {
+  window.setTimeout(() => {
+    const target = document.querySelector(selector);
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    target?.focus?.({ preventScroll: true });
+  }, 80);
+}
+
+function openPublishReview() {
+  state.tab = "publish";
+  saveNavigation();
+  renderAdmin();
+  scrollAndFocus("#publishReview");
+}
+
+async function openWarningTarget(warning) {
+  if (!warning) return;
+  const type = warning.entityType;
+  const id = Number(warning.entityId || 0);
+  const message = String(warning.message || "");
+  if (type === "product" && id) {
+    state.tab = "products";
+    state.productSearch = "";
+    state.editingProductId = id;
+    state.editingProduct = await api(`/api/products/${id}`);
+    state.showProductForm = true;
+    renderAdmin();
+    scrollAndFocus(/stock/i.test(message) ? "#productStockSection" : "#productEditor");
+    return;
+  }
+  if (type === "download") {
+    state.tab = "downloads";
+    state.downloadSearch = "";
+    state.selectedDownloadId = id || null;
+    state.showDownloadEditor = Boolean(id);
+    renderAdmin();
+    scrollAndFocus(id ? "#downloadEditor" : "#downloadList");
+    return;
+  }
+  if (type === "software_bundle") {
+    state.tab = "bundles";
+    state.bundleSearch = "";
+    renderAdmin();
+    scrollAndFocus(id ? `[data-bundle-id="${id}"]` : "#bundleList");
+    return;
+  }
+  if (type === "settings") {
+    state.tab = "settings";
+    state.settingsSection = /support|contact/i.test(message) ? "support" : "branding";
+    saveNavigation();
+    renderAdmin();
+    scrollAndFocus(state.settingsSection === "support" ? "#supportContactSection" : "#settingsForm");
+  }
+}
+
 async function renderPublishReview() {
   const target = document.querySelector("#publishReview");
   if (!target) return;
   const review = await api("/api/publish/preview");
+  const warnings = review.warnings || [];
+  const events = review.recentPublishEvents || [];
   target.innerHTML = `
     <div class="summary-grid">
       <div class="item"><h3>${review.counts.products}</h3><p>Products</p></div>
       <div class="item"><h3>${review.counts.downloads}</h3><p>Downloads</p></div>
       <div class="item"><h3>${review.counts.softwareBundles}</h3><p>Software Bundles</p></div>
-      <div class="item"><h3>${review.warnings.length}</h3><p>Warnings</p></div>
+      <div class="item"><h3>${warnings.length}</h3><p>Warnings</p></div>
     </div>
     <div class="item">
       <h3>Warnings</h3>
-      ${review.warnings.length ? `<ul class="compact-list">${review.warnings.map((warning) => `<li>${escapeHtml(warning.message)}</li>`).join("")}</ul>` : "<p class='muted'>No warnings found.</p>"}
+      ${warnings.length ? `<div class="warning-list">${warnings.map((warning, index) => `
+        <button class="warning-row" type="button" data-warning-index="${index}">
+          <span>${escapeHtml(warning.message)}</span>
+          <strong>Fix</strong>
+        </button>
+      `).join("")}</div>` : "<p class='muted'>No warnings found.</p>"}
     </div>
     <div class="item">
       <h3>Last publish events</h3>
-      ${(review.recentPublishEvents || []).map((event) => `<p><span class="pill">${escapeHtml(event.status)}</span> ${escapeHtml(event.created_at)} ${escapeHtml(event.message || "").slice(0, 160)}</p>`).join("") || "<p class='muted'>No publish events yet.</p>"}
+      ${events.map((event) => {
+        const summary = parseBuildSummary(event.message || "");
+        return `
+          <div class="publish-event">
+            <p><span class="pill">${escapeHtml(event.status)}</span> <span class="muted">${escapeHtml(event.created_at)}</span> ${escapeHtml(cleanPublishMessage(event))}</p>
+            ${summary.pages || summary.duration ? `<p class="muted">${summary.pages ? `${escapeHtml(summary.pages)} page(s) built` : ""}${summary.pages && summary.duration ? " · " : ""}${summary.duration ? `Duration ${escapeHtml(summary.duration)}` : ""}</p>` : ""}
+            ${buildLogDetails(event.message || "")}
+          </div>
+        `;
+      }).join("") || "<p class='muted'>No publish events yet.</p>"}
     </div>
   `;
+  target.querySelectorAll("[data-warning-index]").forEach((button) => {
+    button.addEventListener("click", () => openWarningTarget(warnings[Number(button.dataset.warningIndex)]).catch((error) => setStatus(error.message, true)));
+  });
 }
 
 function bindTabEvents(content) {
@@ -1112,9 +1276,14 @@ function bindTabEvents(content) {
     },
     publishBtn: async () => {
       const output = document.querySelector("#publishOutput");
-      output.textContent = "Publishing...";
+      output.innerHTML = `<p class="muted">Publishing...</p>`;
       const result = await api("/api/publish", { method: "POST", body: {} });
-      output.textContent = result.output || result.message || "Published.";
+      const summary = parseBuildSummary(result.output || "");
+      output.innerHTML = `
+        <p class="publish-success">Published successfully.</p>
+        ${summary.pages || summary.duration ? `<p class="muted">${summary.pages ? `${escapeHtml(summary.pages)} page(s) built` : ""}${summary.pages && summary.duration ? " · " : ""}${summary.duration ? `Duration ${escapeHtml(summary.duration)}` : ""}</p>` : ""}
+        ${buildLogDetails(result.output || result.message || "")}
+      `;
       clearUnpublishedChanges();
       await renderPublishReview();
     },
@@ -1155,6 +1324,18 @@ function bindTabEvents(content) {
   }
 
   bindCopyButtons(content);
+
+  content.querySelectorAll("[data-preview-image]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openImagePreview(button.dataset.previewImage || "", button.dataset.previewTitle || "");
+    });
+  });
+
+  content.querySelectorAll("[data-open-publish]").forEach((button) => {
+    button.addEventListener("click", () => openPublishReview());
+  });
 
   content.querySelectorAll("[data-picker]").forEach((pickerEl) => {
     const search = pickerEl.querySelector("[data-picker-search]");

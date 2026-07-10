@@ -32,6 +32,19 @@ function run(command, args, options = {}) {
   });
 }
 
+function stripAnsi(value) {
+  return String(value || "").replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
+}
+
+function summarizeBuildOutput(output) {
+  const clean = stripAnsi(output);
+  const pagesMatch = clean.match(/(\d+)\s+page\(s\)\s+built(?:\s+in\s+([0-9.]+(?:ms|s)))?/i);
+  const parts = ["Static site published"];
+  if (pagesMatch?.[1]) parts.push(`${pagesMatch[1]} page(s) built`);
+  if (pagesMatch?.[2]) parts.push(`duration ${pagesMatch[2]}`);
+  return parts.join(" - ");
+}
+
 async function generateSoftwareBundleZips() {
   const bundles = db.prepare("SELECT * FROM support_packs WHERE archived = 0 AND auto_generate_zip = 1 ORDER BY sort_order, name").all();
   const generated = [];
@@ -95,7 +108,7 @@ export async function publishSite(userId = null) {
     await fs.emptyDir(config.generatedSiteDir);
     const output = await run("npm", ["run", "build", "--workspace", "site"]);
     const result = await deployProvider.deploy();
-    db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("success", output.slice(-2000), userId);
+    db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("success", summarizeBuildOutput(output), userId);
     return { ok: true, ...result, output, generatedBundles };
   } catch (error) {
     db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("failure", String(error.message || error).slice(0, 4000), userId);
