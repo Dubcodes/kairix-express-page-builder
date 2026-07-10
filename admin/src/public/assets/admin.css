@@ -539,6 +539,10 @@ button.approve {
   white-space: nowrap;
 }
 
+.featured-status-list .pill {
+  margin-left: 6px;
+}
+
 .category-field {
   align-content: start;
 }
@@ -600,6 +604,16 @@ button.approve {
 .picker-selected {
   border-color: #b2ddff;
   background: #eef7ff;
+}
+
+.picker-single .picker-list {
+  max-height: 240px;
+}
+
+.picker-single .picker-selected {
+  border-color: #84caff;
+  background: #eff8ff;
+  box-shadow: inset 3px 0 0 #1570ef;
 }
 
 .mini-action {
@@ -799,6 +813,62 @@ pre {
   padding: 0 8px;
   font-size: 12px;
   color: #344054;
+}
+
+.pill-success {
+  color: #067647;
+  background: #ecfdf3;
+  border: 1px solid #abefc6;
+}
+
+.pill-ready {
+  color: #075985;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+}
+
+.pill-warning,
+.pill-pending,
+.pill-low-stock {
+  color: #93370d;
+  background: #fffaeb;
+  border: 1px solid #fedf89;
+}
+
+.pill-almost-out {
+  color: #9c2a10;
+  background: #fff4ed;
+  border: 1px solid #f9dbaf;
+}
+
+.pill-danger {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+}
+
+.pill-disabled {
+  color: #344054;
+  background: #eaecf0;
+  border: 1px solid #d0d5dd;
+}
+
+.pill-neutral {
+  color: #344054;
+  background: #f2f4f7;
+  border: 1px solid #d0d5dd;
+}
+
+.pill-featured {
+  color: #5925dc;
+  background: #f4f3ff;
+  border: 1px solid #d9d6fe;
+}
+
+.pill-synced {
+  color: #075985;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
 }
 
 .coffee-icon-link {

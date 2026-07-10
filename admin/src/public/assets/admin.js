@@ -125,17 +125,26 @@ function categoryNameById(id) {
   return category?.name || "";
 }
 
-function imageFileOptions(selected = "") {
-  const selectedValue = String(selected || "");
-  return `<option value="">None</option>${state.files.filter(isImageFile).map((file) => {
-    const url = file.url || "";
-    const title = file.originalName || file.original_name || url;
-    return `<option value="${escapeHtml(url)}" ${url === selectedValue ? "selected" : ""}>${escapeHtml(title)}</option>`;
-  }).join("")}`;
-}
-
 function categoryDatalistOptions() {
   return state.categories.map((category) => `<option value="${escapeHtml(category.name)}"></option>`).join("");
+}
+
+function imageFiles() {
+  return state.files.filter(isImageFile);
+}
+
+function fileIdForUrl(url = "") {
+  const file = state.files.find((item) => String(item.url || "") === String(url || ""));
+  return file ? [file.id] : [];
+}
+
+function imageSettingPicker(name, value = "") {
+  return picker(name, imageFiles(), fileIdForUrl(value), "images", {
+    single: true,
+    valueField: "url",
+    hiddenName: name,
+    hiddenValue: value || ""
+  });
 }
 
 function formatBytes(size) {
@@ -264,23 +273,35 @@ function pickerSearchText(row, kind) {
   return dataText(row.name, row.originalName);
 }
 
-function picker(name, rows, selected = [], kind = "items") {
+function pickerValue(row, field = "id") {
+  return field === "url" ? row.url || "" : row[field] ?? row.id;
+}
+
+function picker(name, rows, selected = [], kind = "items", options = {}) {
+  const single = Boolean(options.single);
+  const valueField = options.valueField || "id";
+  const hiddenName = options.hiddenName || (single ? name : "");
+  const hiddenValue = options.hiddenValue || "";
+  const inputName = single ? `${name}Selection` : name;
   const selectedSet = new Set((selected || []).map(Number));
+  const selectedLabel = single ? "selected" : "selected";
   return `
-    <div class="picker" data-picker="${name}">
+    <div class="picker ${single ? "picker-single" : ""}" data-picker="${name}" ${single ? `data-picker-mode="single" data-picker-value-field="${escapeHtml(valueField)}"` : ""}>
+      ${single ? `<input type="hidden" name="${escapeHtml(hiddenName)}" value="${escapeHtml(hiddenValue)}" data-picker-hidden data-picker-initial="${escapeHtml(hiddenValue)}">` : ""}
       <div class="picker-toolbar">
         <input data-picker-search placeholder="Search ${kind}" aria-label="Search ${kind}">
-        <span class="muted" data-picker-count>${selectedSet.size} selected</span>
-        <button class="secondary" type="button" data-picker-select-visible>Select all visible</button>
+        <span class="muted" data-picker-count>${selectedSet.size} ${selectedLabel}</span>
+        ${single ? "" : `<button class="secondary" type="button" data-picker-select-visible>Select all visible</button>`}
         <button class="secondary" type="button" data-picker-clear>Clear selected</button>
       </div>
       <div class="picker-list">
         ${rows.map((row) => {
           const checked = selectedSet.has(Number(row.id));
           const inputId = `picker-${name}-${row.id}`;
+          const value = pickerValue(row, valueField);
           return `
             <div class="picker-row ${checked ? "picker-selected" : ""}" data-picker-row data-search="${escapeHtml(pickerSearchText(row, kind))}">
-              <input id="${escapeHtml(inputId)}" type="checkbox" name="${name}" value="${row.id}" ${checked ? "checked" : ""}>
+              <input id="${escapeHtml(inputId)}" type="checkbox" name="${escapeHtml(inputName)}" value="${row.id}" data-picker-value="${escapeHtml(value)}" ${checked ? "checked" : ""}>
               ${pickerMeta(row, kind, inputId)}
             </div>
           `;
@@ -332,6 +353,26 @@ function stockLabel(product) {
   if (count <= 4) return "Almost out";
   if (count <= 14) return "Low stock";
   return "10+ available";
+}
+
+function semanticType(value = "") {
+  const text = String(value || "").toLowerCase();
+  if (/success|published|active|complete|valid|available/.test(text)) return "success";
+  if (/ready|latest/.test(text)) return "ready";
+  if (/needs|warning|pending|review|low stock/.test(text)) return "warning";
+  if (/almost out/.test(text)) return "almost-out";
+  if (/out of stock|failed|error|invalid|deprecated/.test(text)) return "danger";
+  if (/archived|disabled/.test(text)) return "disabled";
+  if (/check marketplace|not tracked|hidden|local|manual/.test(text)) return "neutral";
+  if (/sync|linked|marketplace|aliexpress/.test(text)) return "synced";
+  if (/featured/.test(text)) return "featured";
+  return "neutral";
+}
+
+function pill(label, type = "", title = "") {
+  const semantic = type || semanticType(label);
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+  return `<span class="pill pill-${escapeHtml(semantic)}"${titleAttr}>${escapeHtml(label)}</span>`;
 }
 
 function formValues(form) {
@@ -538,8 +579,9 @@ function dashboardView() {
       <p class="muted">Create products, group downloads into Software Bundles, publish the static customer support site, and review basic analytics.</p>
       <div class="actions">
         <button id="sampleBtn" type="button">Create rich sample data</button>
-        <a class="action-link" href="/preview/" target="_blank">Open last published preview</a>
+        <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Shows the last published static site.">Open public preview</a>
       </div>
+      ${hasUnpublishedChanges() ? `<p class="muted">Preview may not include current edits until you publish.</p>` : ""}
       <div class="list">
         <div class="item"><h3>${state.categories.length}</h3><p>Categories</p></div>
         <div class="item"><h3>${state.products.length}</h3><p>Products</p></div>
@@ -580,16 +622,44 @@ function homePageView() {
       ${unpublishedNotice()}
       <p class="muted">Control the customer-facing home page. This does not change the Page Manager admin title.</p>
       <form id="settingsForm" class="form-grid home-settings-form" data-settings-area="Home Page">
+        <div class="wide editor-actionbar">
+          <div>
+            <strong>Home Page editor</strong>
+            <span class="muted" data-form-dirty-state>Saved changes still need publishing before customers see them.</span>
+          </div>
+          <div class="actions">
+            <button type="submit">Save Home Page</button>
+            <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Shows the last published static site.">Open public preview</a>
+          </div>
+        </div>
         <fieldset class="wide form-section">
           <legend>Hero</legend>
           <div class="form-grid">
             <label>Homepage title / hero heading<input name="homeHeroTitle" value="${escapeHtml(s.homeHeroTitle || "")}" placeholder="${escapeHtml(heroPlaceholder)}"></label>
-            <label>Hero image<select name="homeHeroImage">${imageFileOptions(s.homeHeroImage)}</select></label>
             <label class="wide">Intro / subtitle<textarea name="introText">${escapeHtml(s.introText || "")}</textarea></label>
+            <div class="wide">
+              <strong>Hero image</strong>
+              <p class="field-help">Optional image shown beside the home page hero. Use an uploaded image file.</p>
+              ${imageSettingPicker("homeHeroImage", s.homeHeroImage)}
+            </div>
           </div>
         </fieldset>
         <fieldset class="wide form-section">
-          <legend>Sections</legend>
+          <legend>New customer block</legend>
+          <div class="form-grid">
+            <label class="check-row wide"><input name="homeTextBlockEnabled" type="checkbox" ${settingEnabled(s.homeTextBlockEnabled, false) ? "checked" : ""}> Show new customer block</label>
+            <label>Heading<input name="homeTextBlockHeading" value="${escapeHtml(s.homeTextBlockHeading || "")}"></label>
+            <label class="wide">Body text<textarea name="homeTextBlockText">${escapeHtml(s.homeTextBlockText || "")}</textarea></label>
+            <div class="wide">
+              <strong>Block image</strong>
+              <p class="field-help">Optional supporting image for the new customer block.</p>
+              ${imageSettingPicker("homeTextBlockImage", s.homeTextBlockImage)}
+            </div>
+          </div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Homepage sections</legend>
+          <p class="field-help">Choose which blocks appear on the public homepage after the hero.</p>
           <div class="home-toggle-grid">
             <label class="check-row"><input name="homeShowCategories" type="checkbox" ${settingEnabled(s.homeShowCategories, true) ? "checked" : ""}> Show categories</label>
             <label class="check-row"><input name="homeShowFeaturedProducts" type="checkbox" ${settingEnabled(s.homeShowFeaturedProducts, true) ? "checked" : ""}> Show featured products</label>
@@ -605,15 +675,6 @@ function homePageView() {
             <label class="wide">Text<textarea name="homeSupportText">${escapeHtml(s.homeSupportText || "Need product help, setup details, manuals or store links?")}</textarea></label>
           </div>
         </fieldset>
-        <fieldset class="wide form-section">
-          <legend>New customer block</legend>
-          <div class="form-grid">
-            <label class="check-row wide"><input name="homeTextBlockEnabled" type="checkbox" ${settingEnabled(s.homeTextBlockEnabled, false) ? "checked" : ""}> Show new customer block</label>
-            <label>Heading<input name="homeTextBlockHeading" value="${escapeHtml(s.homeTextBlockHeading || "")}"></label>
-            <label>Image<select name="homeTextBlockImage">${imageFileOptions(s.homeTextBlockImage)}</select></label>
-            <label class="wide">Body text<textarea name="homeTextBlockText">${escapeHtml(s.homeTextBlockText || "")}</textarea></label>
-          </div>
-        </fieldset>
         <div class="wide form-actions"><button type="submit">Save Home Page</button></div>
       </form>
       <div class="item featured-status-panel">
@@ -622,7 +683,8 @@ function homePageView() {
           <p class="muted">${featured.length ? `${featured.length} product(s) selected for the homepage.` : "No products are selected. Recent products will show instead."}</p>
         </div>
         <div class="featured-status-list">
-          ${featured.map((product) => `<button class="secondary" type="button" data-edit-product="${product.id}" title="Edit ${escapeHtml(product.name)}">${escapeHtml(product.name)}</button>`).join("") || "<span class='muted'>Use a product editor to feature products.</span>"}
+          ${featured.map((product) => `<button class="secondary" type="button" data-edit-product="${product.id}" title="Edit ${escapeHtml(product.name)}">${escapeHtml(product.name)} ${pill("Featured", "featured", "Shown on the public homepage")}</button>`).join("") || "<span class='muted'>Use a product editor to feature products.</span>"}
+          <button class="secondary" type="button" data-tab-jump="products">Manage products</button>
         </div>
       </div>
     </section>
@@ -645,6 +707,10 @@ function brandingSettingsView() {
         <h2>Store settings</h2>
       </div>
       <form id="settingsForm" class="form-grid" data-settings-area="Settings/branding">
+        <div class="wide editor-actionbar">
+          <div><strong>Branding settings</strong><span class="muted" data-form-dirty-state>Saved changes still need publishing before customers see them.</span></div>
+          <div class="actions"><button type="submit">Save settings</button></div>
+        </div>
         <label>Store/brand name<input name="brandName" value="${escapeHtml(s.brandName || "")}"></label>
         <label>Logo<input name="logo" type="file" accept="image/*"></label>
         <label>Main marketplace/store link ${helpIcon("Link to this seller's marketplace store page.")}<input name="marketplaceUrl" value="${escapeHtml(s.marketplaceUrl || "")}"></label>
@@ -669,6 +735,10 @@ function supportSettingsView() {
       <h2>Support/contact info</h2>
       <p class="muted">Show customers where to get product help. For order or payment issues, direct them back to the marketplace order page.</p>
       <form id="settingsForm" class="form-grid support-settings-form" data-settings-area="Settings/support/contact">
+        <div class="wide editor-actionbar">
+          <div><strong>Support settings</strong><span class="muted" data-form-dirty-state>Saved changes still need publishing before customers see them.</span></div>
+          <div class="actions"><button type="submit">Save support info</button></div>
+        </div>
         <label>Support email<input name="supportEmail" type="email" value="${escapeHtml(s.supportEmail || "")}"></label>
         <label>Support link<input name="supportLink" value="${escapeHtml(s.supportLink || "")}"></label>
         <label>Marketplace/store link<input name="marketplaceUrl" value="${escapeHtml(s.marketplaceUrl || "")}"></label>
@@ -703,7 +773,7 @@ function supportSettingsView() {
               <div class="item contact-method-row">
                 <div class="contact-method-main" title="${escapeHtml(method.value)}">
                   <strong>${escapeHtml(method.label)}</strong>
-                  <span class="pill">${escapeHtml(method.type)}</span>
+                  ${pill(method.type, "neutral")}
                   <p class="muted">${escapeHtml(method.value)}</p>
                 </div>
                 <p class="muted">Sort ${escapeHtml(method.sort_order ?? 0)}</p>
@@ -746,7 +816,7 @@ function categoriesView() {
         <label>Description<input name="description"></label>
         <button type="submit">Create category</button>
       </form>
-      <div class="list">${state.categories.map((cat) => `<div class="item"><h3>${escapeHtml(cat.name)}</h3><p>${escapeHtml(cat.description || "")}</p><span class="pill">${escapeHtml(cat.slug)}</span></div>`).join("")}</div>
+      <div class="list">${state.categories.map((cat) => `<div class="item"><h3>${escapeHtml(cat.name)}</h3><p>${escapeHtml(cat.description || "")}</p>${pill(cat.slug, "neutral")}</div>`).join("")}</div>
     </section>
   `;
 }
@@ -804,7 +874,7 @@ function downloadsView() {
       <div id="downloadList" class="list">${state.downloads.map((download) => `
         <div class="item download-row" data-filter-row data-edit-download="${download.id}" data-search="${escapeHtml(dataText(download.name, download.type, download.short_description, latestVersionLabel(download)))}">
           <div>
-            <h3>${escapeHtml(download.name)} <span class="pill">${escapeHtml(download.type)}</span></h3>
+            <h3>${escapeHtml(download.name)} ${pill(download.type, "neutral")}</h3>
             <p>${escapeHtml(download.short_description || "")}</p>
             <p class="muted">${escapeHtml(latestVersionLabel(download))} · ${(download.versions || []).length} version(s)</p>
           </div>
@@ -820,9 +890,15 @@ function downloadsView() {
       <section class="panel editor-panel" id="downloadEditor" tabindex="-1">
         <div class="section-heading">
           <h2>${editorDownload.id ? `Edit ${escapeHtml(editorDownload.name)}` : "Create download"}</h2>
-          <button class="secondary" id="closeDownloadEditorBtn" type="button">Close</button>
         </div>
-        <form id="downloadForm" class="form-grid">
+      <form id="downloadForm" class="form-grid">
+          <div class="wide editor-actionbar">
+            <div><strong>${editorDownload.id ? "Download editor" : "New download"}</strong><span class="muted" data-form-dirty-state>Changes are local until saved and published.</span></div>
+            <div class="actions">
+              <button type="submit">${editorDownload.id ? "Save download" : "Create download"}</button>
+              <button class="secondary" id="closeDownloadEditorBtn" type="button">Close</button>
+            </div>
+          </div>
           <label>Name<input name="name" required value="${escapeHtml(editorDownload.name || "")}"></label>
           <label>Type<select name="type">${["Android", "iOS", "Windows", "Mac", "Firmware", "Manual", "Other"].map((type) => `<option value="${type}" ${(editorDownload.type || "Other") === type ? "selected" : ""}>${type}</option>`).join("")}</select></label>
           <label>Sort order<input name="sortOrder" type="number" value="${escapeHtml(editorDownload.sort_order ?? 0)}"></label>
@@ -849,7 +925,7 @@ function downloadsView() {
             <button type="submit">Add version</button>
           </form>
           <div class="list">
-            ${(editorDownload.versions || []).map((version) => `<div class="item mini-row"><div><strong>${escapeHtml(version.version_number)}</strong> ${version.is_latest ? "<span class='pill'>Latest</span>" : ""}<p class="muted">${escapeHtml(version.release_date || "No date")} ${version.deprecated ? "· Deprecated" : ""}</p></div></div>`).join("") || "<p class='muted'>No versions yet.</p>"}
+            ${(editorDownload.versions || []).map((version) => `<div class="item mini-row"><div><strong>${escapeHtml(version.version_number)}</strong> ${version.is_latest ? pill("Latest", "ready") : ""} ${version.deprecated ? pill("Deprecated", "danger") : ""}<p class="muted">${escapeHtml(version.release_date || "No date")}</p></div></div>`).join("") || "<p class='muted'>No versions yet.</p>"}
           </div>
         ` : ""}
       </section>
@@ -864,6 +940,10 @@ function bundlesView() {
       <p class="muted">Software Bundles group the apps, manuals, firmware, setup tools and guides customers need for a product.</p>
       <div class="toolbar"><input id="bundleSearch" placeholder="Search Software Bundles" value="${escapeHtml(state.bundleSearch)}"></div>
       <form id="packForm" class="form-grid">
+        <div class="wide editor-actionbar">
+          <div><strong>Software Bundle editor</strong><span class="muted" data-form-dirty-state>Changes are local until saved and published.</span></div>
+          <div class="actions"><button type="submit">Save Software Bundle</button></div>
+        </div>
         <label>Name<input name="name" required></label>
         <label class="wide">Description<textarea name="description"></textarea></label>
         <div class="wide"><strong>Downloads included in this Software Bundle</strong>${picker("downloadIds", state.downloads, [], "downloads")}</div>
@@ -897,9 +977,9 @@ function productsView() {
       <div id="productList" class="list">${products.map((product) => `
         <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""}" data-filter-row data-search="${escapeHtml(dataText(product.name, product.sku, product.category_name, product.short_description, stockLabel(product), product.import_sync_status))}">
           <div>
-            <h3>${escapeHtml(product.name)} <span class="pill">${escapeHtml(product.publish_state || product.status)}</span>${product.featured ? ` <span class="pill featured-pill">Featured</span>` : ""}${product.import_sync_status ? ` <span class="pill">AliExpress ${escapeHtml(product.import_sync_status)}</span>` : ""}</h3>
+            <h3>${escapeHtml(product.name)} ${pill(product.publish_state || product.status, semanticType(product.publish_state || product.status), product.publish_state === "draft" ? "Not published to public site" : "")}${product.featured ? ` ${pill("Featured", "featured", "Shown on the public homepage")}` : ""}${product.import_sync_status ? ` ${pill(`AliExpress ${product.import_sync_status}`, "synced", "Linked to marketplace data")}` : ""}</h3>
             <p>${escapeHtml(product.short_description || "")}</p>
-            <p class="muted">${escapeHtml(product.category_name || "No category")} ${product.sku ? `- ${escapeHtml(product.sku)}` : ""} - ${escapeHtml(stockLabel(product))}${product.last_imported_at ? ` - Synced ${escapeHtml(product.last_imported_at)}` : ""}</p>
+            <p class="muted">${escapeHtml(product.category_name || "No category")} ${product.sku ? `- ${escapeHtml(product.sku)}` : ""} ${pill(stockLabel(product))}${product.last_imported_at ? ` - Synced ${escapeHtml(product.last_imported_at)}` : ""}</p>
           </div>
           <div class="actions"><button type="button" data-edit-product="${product.id}">Edit</button><button class="secondary" type="button" data-duplicate-product="${product.id}">Duplicate</button>${product.import_sync_status ? `<button class="secondary" type="button" data-detach-aliexpress="${product.id}">Detach</button>` : ""}</div>
         </div>`).join("")}</div>
@@ -989,6 +1069,7 @@ function productsView() {
 }
 
 function publishView() {
+  const unpublishedNote = hasUnpublishedChanges() ? `<p class="muted">Preview may not include current edits until you publish.</p>` : "";
   return `
     <section class="panel">
       <h2>Publish Review ${helpIcon("Review warnings, preview the site, then publish the static customer support site.")}</h2>
@@ -996,8 +1077,12 @@ function publishView() {
       <div id="publishReview" class="list" tabindex="-1"></div>
       <div class="actions">
         <button id="publishBtn" type="button">Publish</button>
-        <a class="action-link" href="/preview/" target="_blank">Open last published preview</a>
+        <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Shows the last published static site.">Open public preview</a>
+        <a class="action-link secondary-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Preview home page">Home</a>
+        <a class="action-link secondary-link" href="/preview/downloads/" target="_blank" rel="noopener noreferrer" title="Preview downloads page">Downloads</a>
+        <a class="action-link secondary-link" href="/preview/support/" target="_blank" rel="noopener noreferrer" title="Preview support page">Support</a>
       </div>
+      ${unpublishedNote}
       <div id="publishOutput" class="publish-output" aria-live="polite"></div>
     </section>
   `;
@@ -1026,10 +1111,14 @@ function integrationsView() {
         <div class="item">
           <div class="section-heading">
             <h3>AliExpress</h3>
-            <span class="pill">${escapeHtml(status)}</span>
+            ${pill(status, semanticType(status))}
           </div>
           <p class="muted">Credentials stay in the Page Manager database and are not exported to the public site. Configure official Open Platform endpoints before connecting.</p>
           <form id="aliexpressSettingsForm" class="form-grid">
+            <div class="wide editor-actionbar">
+              <div><strong>Marketplace settings</strong><span class="muted" data-form-dirty-state>Save credentials before connecting or testing.</span></div>
+              <div class="actions"><button type="submit">Save AliExpress settings</button></div>
+            </div>
             <label class="check-row"><input name="enabled" type="checkbox" ${connection.enabled ? "checked" : ""}> Enable AliExpress sync</label>
             <label>App key / client ID<input name="appKey" value="${escapeHtml(connection.app_key || "")}"></label>
             <label>App secret<input name="appSecret" type="password" placeholder="${connection.hasSecret ? "Saved - leave blank to keep" : ""}"></label>
@@ -1172,7 +1261,7 @@ function renderUserList() {
   }).map((user) => `
     <div class="item user-row ${user.status === "pending" ? "pending-user" : ""}" data-filter-row data-search="${escapeHtml(dataText(user.username, user.email, user.role, user.status))}">
       <div>
-        <h3>${escapeHtml(user.username)} <span class="pill">${escapeHtml(user.role)}</span> <span class="pill">${escapeHtml(user.status || "active")}</span></h3>
+        <h3>${escapeHtml(user.username)} ${pill(user.role, "neutral")} ${pill(user.status || "active")}</h3>
         <p class="muted">${escapeHtml(user.email || "No email")} - Last login: ${escapeHtml(user.last_login_at || "Never")}</p>
         ${user.support_access_expires_at ? `<p class="muted">Temporary support access expires ${escapeHtml(user.support_access_expires_at)}</p>` : ""}
       </div>
@@ -1190,11 +1279,11 @@ function renderInviteList() {
   if (!state.invites.length) return "<p class='muted'>No invites loaded yet.</p>";
   return state.invites.map((invite) => `
     <div class="item" data-filter-row data-search="${escapeHtml(dataText(invite.label, invite.email, invite.role, invite.status))}">
-      <h3>${escapeHtml(invite.label || invite.email || "Invite")} <span class="pill">${escapeHtml(invite.role)}</span> <span class="pill">${escapeHtml(invite.status || "open")}</span></h3>
+      <h3>${escapeHtml(invite.label || invite.email || "Invite")} ${pill(invite.role, "neutral")} ${pill(invite.status || "open")}</h3>
       <p class="muted">${escapeHtml(invite.email || "No email")} - Expires ${escapeHtml(invite.expires_at)}</p>
       <p class="muted">Created ${escapeHtml(invite.created_at)}${invite.created_by_username ? ` by ${escapeHtml(invite.created_by_username)}` : ""}${invite.accepted_username ? ` - Accepted by ${escapeHtml(invite.accepted_username)}` : ""}</p>
-      ${invite.requires_approval ? "<span class='pill'>Approval required</span>" : ""}
-      ${invite.support_access_hours ? `<span class="pill">${escapeHtml(invite.support_access_hours)}h support access</span>` : ""}
+      ${invite.requires_approval ? pill("Approval required", "warning") : ""}
+      ${invite.support_access_hours ? pill(`${invite.support_access_hours}h support access`, "neutral") : ""}
     </div>
   `).join("");
 }
@@ -1449,8 +1538,8 @@ async function renderPublishReview() {
       ${events.map((event) => {
         const summary = parseBuildSummary(event.message || "");
         return `
-          <div class="publish-event">
-            <p><span class="pill">${escapeHtml(event.status)}</span> <span class="muted">${escapeHtml(event.created_at)}</span> ${escapeHtml(cleanPublishMessage(event))}</p>
+          <div class="publish-event publish-event-${escapeHtml(semanticType(event.status))}">
+            <p>${pill(event.status)} <span class="muted">${escapeHtml(event.created_at)}</span> ${escapeHtml(cleanPublishMessage(event))}</p>
             ${summary.pages || summary.duration ? `<p class="muted">${summary.pages ? `${escapeHtml(summary.pages)} page(s) built` : ""}${summary.pages && summary.duration ? " · " : ""}${summary.duration ? `Duration ${escapeHtml(summary.duration)}` : ""}</p>` : ""}
             ${buildLogDetails(event.message || "")}
           </div>
@@ -1508,14 +1597,14 @@ function bindTabEvents(content) {
         ${table("Top products", analytics.topProducts || [])}
         ${table("Top downloads", analytics.topDownloads || [])}
         ${table("Marketplace clicks", analytics.marketplaceClicks || [])}
-        <div class="item"><h3>Recent activity</h3>${(analytics.recent || []).map((event) => `<p><span class="pill">${escapeHtml(event.event_type)}</span> ${escapeHtml(event.path || "")} <span class="muted">${escapeHtml(event.created_at)}</span></p>`).join("") || "<p class='muted'>No events yet.</p>"}</div>
+        <div class="item"><h3>Recent activity</h3>${(analytics.recent || []).map((event) => `<p>${pill(event.event_type, "neutral")} ${escapeHtml(event.path || "")} <span class="muted">${escapeHtml(event.created_at)}</span></p>`).join("") || "<p class='muted'>No events yet.</p>"}</div>
       `;
     },
     loadAuditBtn: async () => {
       const audit = await api("/api/audit-events");
       document.querySelector("#auditOutput").innerHTML = (audit.events || []).map((event) => `
         <div class="item">
-          <h3>${escapeHtml(event.event_type)} ${event.username ? `<span class="pill">${escapeHtml(event.username)}</span>` : ""}</h3>
+          <h3>${escapeHtml(event.event_type)} ${event.username ? pill(event.username, "neutral") : ""}</h3>
           <p>${escapeHtml(event.message || "")}</p>
           <p class="muted">${escapeHtml(event.created_at)} ${event.entity_type ? `- ${escapeHtml(event.entity_type)} #${escapeHtml(event.entity_id || "")}` : ""}</p>
         </div>
@@ -1551,23 +1640,46 @@ function bindTabEvents(content) {
     });
   });
 
+  content.querySelectorAll("form").forEach((form) => {
+    const dirtyState = form.querySelector("[data-form-dirty-state]");
+    if (!dirtyState) return;
+    const markDirty = () => {
+      dirtyState.textContent = "Unsaved changes.";
+    };
+    form.addEventListener("input", markDirty);
+    form.addEventListener("change", markDirty);
+  });
+
   content.querySelectorAll("[data-picker]").forEach((pickerEl) => {
     const search = pickerEl.querySelector("[data-picker-search]");
     const count = pickerEl.querySelector("[data-picker-count]");
+    const single = pickerEl.dataset.pickerMode === "single";
+    const hidden = pickerEl.querySelector("[data-picker-hidden]");
     const update = () => {
       const query = String(search?.value || "").trim().toLowerCase();
       let selected = 0;
+      let selectedValue = "";
       pickerEl.querySelectorAll("[data-picker-row]").forEach((row) => {
         const checked = row.querySelector("input[type='checkbox']")?.checked;
         if (checked) selected += 1;
+        if (checked) selectedValue = row.querySelector("input[type='checkbox']")?.dataset.pickerValue || "";
         const matches = String(row.dataset.search || "").toLowerCase().includes(query);
         row.classList.toggle("hidden", Boolean(query) && !matches && !checked);
         row.classList.toggle("picker-selected", Boolean(checked));
       });
-      if (count) count.textContent = `${selected} selected`;
+      if (hidden) hidden.value = selected ? selectedValue : hidden.dataset.pickerInitial || "";
+      if (count) count.textContent = single ? (selected ? "1 selected" : "No image selected") : `${selected} selected`;
     };
     search?.addEventListener("input", update);
-    pickerEl.addEventListener("change", update);
+    pickerEl.addEventListener("change", (event) => {
+      if (single && event.target.matches("input[type='checkbox']") && event.target.checked) {
+        if (hidden) hidden.dataset.pickerInitial = "";
+        pickerEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
+          if (input !== event.target) input.checked = false;
+        });
+      }
+      update();
+    });
     pickerEl.querySelector("[data-picker-select-visible]")?.addEventListener("click", () => {
       pickerEl.querySelectorAll("[data-picker-row]:not(.hidden) input[type='checkbox']").forEach((input) => {
         input.checked = true;
@@ -1575,12 +1687,21 @@ function bindTabEvents(content) {
       update();
     });
     pickerEl.querySelector("[data-picker-clear]")?.addEventListener("click", () => {
+      if (hidden) hidden.dataset.pickerInitial = "";
       pickerEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
         input.checked = false;
       });
       update();
     });
     update();
+  });
+
+  content.querySelectorAll("[data-tab-jump]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.tab = button.dataset.tabJump;
+      saveNavigation();
+      renderAdmin();
+    });
   });
 
   const contactMethodForm = content.querySelector("#contactMethodForm");

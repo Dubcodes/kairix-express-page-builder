@@ -21,8 +21,9 @@ const previousVersions = (download.versions || []).filter((version) => !latest |
         <h2>Current version</h2>
         <article class="card version-card current-version">
           <div>
-            <p class="eyebrow">Current {download.type}</p>
+            <p class="eyebrow"><span class="pill pill-download">Current {download.type}</span></p>
             <h3>{latest.version_number}</h3>
+            <p><span class="pill pill-ready">Latest version</span></p>
             <p class="muted">{latest.release_date ? `Released ${latest.release_date}` : "No release date"} {latest.file_size ? `- ${latest.file_size}` : ""}</p>
             <div class="release-notes" set:html={latest.release_notes}></div>
             {latest.checksum && <p class="muted checksum">Checksum: {latest.checksum}</p>}
@@ -39,8 +40,8 @@ const previousVersions = (download.versions || []).filter((version) => !latest |
         {previousVersions.map((version) => (
           <article class="card version-card">
             <div>
-              <p class="eyebrow">{download.type}</p>
-              <h3>{version.version_number} {version.deprecated ? <span class="pill">Deprecated</span> : null}</h3>
+              <p class="eyebrow"><span class="pill pill-download">{download.type}</span></p>
+              <h3>{version.version_number} {version.deprecated ? <span class="pill pill-deprecated">Deprecated</span> : null}</h3>
               <p class="muted">{version.release_date ? `Released ${version.release_date}` : "No release date"} {version.file_size ? `- ${version.file_size}` : ""}</p>
               {version.warning_text && <p class="warning-text">{version.warning_text}</p>}
               <div class="release-notes" set:html={version.release_notes}></div>

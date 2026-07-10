@@ -6,9 +6,9 @@ const searchText = `${download.name} ${download.type} ${latest?.version_number |
 ---
 <article class="card download-card" data-download-item data-type={download.type} data-search={searchText}>
   <div class="download-card-main">
-    <p class="eyebrow">{download.type}</p>
+    <p class="eyebrow"><span class="pill pill-download">{download.type}</span></p>
     <h3>{download.name}</h3>
-    {latest?.version_number && <p class="muted">Latest version {latest.version_number}</p>}
+    {latest?.version_number && <p><span class="pill pill-ready">Latest {latest.version_number}</span></p>}
     <p>{download.short_description}</p>
   </div>
   <div class="button-row download-actions">

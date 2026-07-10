@@ -11,6 +11,7 @@ export function getStaticPaths() {
 const { product } = Astro.props;
 const images = (product.gallery?.length ? product.gallery : product.image ? [product.image] : []).map(assetPath);
 const stock = stockLabel(product);
+const stockClass = stock.includes("Out") ? "pill-danger" : stock.includes("Almost") ? "pill-almost-out" : stock.includes("Low") ? "pill-low-stock" : "pill-success";
 const bundles = product.softwareBundles || product.supportPacks || [];
 ---
 <PublicLayout title={product.name} description={product.short_description}>
@@ -71,7 +72,7 @@ const bundles = product.softwareBundles || product.supportPacks || [];
       <aside class="card">
         {product.sku && <p><strong>SKU:</strong> {product.sku}</p>}
         {product.version_label && <p><strong>Version:</strong> {product.version_label}</p>}
-        {stock && <p><span class="pill" title="Availability shown by the seller">{stock}</span></p>}
+        {stock && <p><span class={`pill ${stockClass}`} title="Availability shown by the seller">{stock}</span></p>}
         <div class="button-row">
           {product.marketplace_url && <a class="button" href={product.marketplace_url} data-track-marketplace={product.id}>{content.settings.defaultMarketplaceLabel}</a>}
           {product.marketplace_qr && <button class="button secondary" type="button" data-qr="marketplace" title="Show marketplace QR code" aria-label="Show marketplace QR code">QR</button>}
