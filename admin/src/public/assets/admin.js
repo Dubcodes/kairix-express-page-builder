@@ -360,16 +360,29 @@ function hasUnpublishedChanges() {
   return localStorage.getItem("kairixUnpublishedChanges") === "1";
 }
 
+function unpublishedAreas() {
+  try {
+    const areas = JSON.parse(localStorage.getItem("kairixUnpublishedAreas") || "[]");
+    return Array.isArray(areas) ? areas : [];
+  } catch {
+    return [];
+  }
+}
+
 function unpublishedNotice() {
   return hasUnpublishedChanges() ? `<button class="notice notice-action" type="button" data-open-publish>Unpublished changes - publish needed.</button>` : "";
 }
 
-function markUnpublishedChanges() {
+function markUnpublishedChanges(area = "Content changes") {
   localStorage.setItem("kairixUnpublishedChanges", "1");
+  const areas = new Set(unpublishedAreas());
+  if (area) areas.add(area);
+  localStorage.setItem("kairixUnpublishedAreas", JSON.stringify([...areas]));
 }
 
 function clearUnpublishedChanges() {
   localStorage.removeItem("kairixUnpublishedChanges");
+  localStorage.removeItem("kairixUnpublishedAreas");
 }
 
 function updateSessionUi(user) {
@@ -796,6 +809,16 @@ function productsView() {
     </section>
     <section class="panel ${state.showProductForm ? "" : "hidden"}" id="productEditor" tabindex="-1">
       <h2>${state.editingProductId ? "Edit product" : "Create product"}</h2>
+      <div class="editor-actionbar">
+        <div>
+          <strong>${state.editingProductId ? "Product editor" : "New product"}</strong>
+          <span class="muted" id="productDirtyState">Changes are local until saved and published.</span>
+        </div>
+        <div class="actions">
+          <button type="submit" form="productForm">${state.editingProductId ? "Save product" : "Create product"}</button>
+          <button class="secondary" type="button" id="closeProductEditorBtn">Close editor</button>
+        </div>
+      </div>
       <form id="productForm" class="form-grid">
         <fieldset class="wide form-section">
           <legend>Basics</legend>
@@ -856,7 +879,7 @@ function productsView() {
           <legend>Related products</legend>
           ${picker("relatedProductIds", state.products.filter((product) => product.id !== edit.id), editRelatedProductIds, "products")}
         </fieldset>
-        <button type="submit">${state.editingProductId ? "Save product" : "Create product"}</button>
+        <div class="wide form-actions"><button type="submit">${state.editingProductId ? "Save product" : "Create product"}</button></div>
       </form>
     </section>
   `;
@@ -866,8 +889,7 @@ function publishView() {
   return `
     <section class="panel">
       <h2>Publish Review ${helpIcon("Review warnings, preview the site, then publish the static customer support site.")}</h2>
-      ${unpublishedNotice()}
-      <p class="muted">Review warnings, open the current preview, then publish the static customer support site.</p>
+      <p class="muted">Review saved content, open the current preview, then publish the static customer support site.</p>
       <div id="publishReview" class="list" tabindex="-1"></div>
       <div class="actions">
         <button id="publishBtn" type="button">Publish</button>
@@ -1217,6 +1239,29 @@ function cleanPublishMessage(event) {
   return raw || (event.status === "success" ? "Static site published" : "Publish event recorded");
 }
 
+function publishStateCard() {
+  const areas = unpublishedAreas();
+  if (!hasUnpublishedChanges()) {
+    return `
+      <div class="item publish-state-card publish-state-clean">
+        <h3>Preview is up to date</h3>
+        <p class="muted">Publishing again will rebuild the static preview with the current saved content.</p>
+      </div>
+    `;
+  }
+  const areaList = areas.length
+    ? `<ul class="compact-list">${areas.map((area) => `<li>${escapeHtml(area)}</li>`).join("")}</ul>`
+    : `<p class="muted">Saved admin changes are waiting to be published.</p>`;
+  return `
+    <div class="item publish-state-card publish-state-pending">
+      <h3>Unpublished changes are waiting to be published.</h3>
+      <p>Changes made in the Page Manager do not appear on the public preview/site until you publish.</p>
+      <p class="muted">Likely changed areas:</p>
+      ${areaList}
+    </div>
+  `;
+}
+
 function scrollAndFocus(selector) {
   window.setTimeout(() => {
     const target = document.querySelector(selector);
@@ -1279,6 +1324,7 @@ async function renderPublishReview() {
   const warnings = review.warnings || [];
   const events = review.recentPublishEvents || [];
   target.innerHTML = `
+    ${publishStateCard()}
     <div class="summary-grid">
       <div class="item"><h3>${review.counts.products}</h3><p>Products</p></div>
       <div class="item"><h3>${review.counts.downloads}</h3><p>Downloads</p></div>
@@ -1287,12 +1333,13 @@ async function renderPublishReview() {
     </div>
     <div class="item">
       <h3>Warnings</h3>
+      <p class="muted">Warnings are content quality checks. They are separate from whether saved changes still need publishing.</p>
       ${warnings.length ? `<div class="warning-list">${warnings.map((warning, index) => `
         <button class="warning-row" type="button" data-warning-index="${index}">
           <span>${escapeHtml(warning.message)}</span>
           <strong>Fix</strong>
         </button>
-      `).join("")}</div>` : "<p class='muted'>No warnings found.</p>"}
+      `).join("")}</div>` : "<p class='muted'>No blocking warnings found.</p>"}
     </div>
     <div class="item">
       <h3>Last publish events</h3>
@@ -1317,7 +1364,7 @@ function bindTabEvents(content) {
   const handlers = {
     sampleBtn: async () => {
       await api("/api/sample-data", { method: "POST", body: {} });
-      markUnpublishedChanges();
+      markUnpublishedChanges("Products");
       await loadData();
       renderAdmin();
       setStatus("Sample data created.");
@@ -1325,16 +1372,21 @@ function bindTabEvents(content) {
     publishBtn: async () => {
       const output = document.querySelector("#publishOutput");
       output.innerHTML = `<p class="muted">Publishing...</p>`;
-      const result = await api("/api/publish", { method: "POST", body: {} });
-      const summary = parseBuildSummary(result.output || "");
-      output.innerHTML = `
-        <p class="publish-success">Published successfully.</p>
-        ${summary.pages || summary.duration ? `<p class="muted">${summary.pages ? `${escapeHtml(summary.pages)} page(s) built` : ""}${summary.pages && summary.duration ? " · " : ""}${summary.duration ? `Duration ${escapeHtml(summary.duration)}` : ""}</p>` : ""}
-        ${buildLogDetails(result.output || result.message || "")}
-      `;
-      clearUnpublishedChanges();
-      document.querySelectorAll("[data-open-publish]").forEach((notice) => notice.remove());
-      await renderPublishReview();
+      try {
+        const result = await api("/api/publish", { method: "POST", body: {} });
+        const summary = parseBuildSummary(result.output || "");
+        output.innerHTML = `
+          <p class="publish-success">Published successfully.</p>
+          ${summary.pages || summary.duration ? `<p class="muted">${summary.pages ? `${escapeHtml(summary.pages)} page(s) built` : ""}${summary.pages && summary.duration ? " · " : ""}${summary.duration ? `Duration ${escapeHtml(summary.duration)}` : ""}</p>` : ""}
+          ${buildLogDetails(result.output || result.message || "")}
+        `;
+        clearUnpublishedChanges();
+        document.querySelectorAll("[data-open-publish]").forEach((notice) => notice.remove());
+        await renderPublishReview();
+      } catch (error) {
+        output.innerHTML = `<p class="error">Publish failed.</p><p class="muted">${escapeHtml(error.message)}</p>`;
+        throw error;
+      }
     },
     loadAnalyticsBtn: async () => {
       const range = document.querySelector("#analyticsRange")?.value || "7d";
@@ -1434,7 +1486,7 @@ function bindTabEvents(content) {
     const values = formValues(contactMethodForm);
     values.sortOrder = Number(values.sortOrder || 0);
     await api("/api/contact-methods", { method: "POST", body: values });
-    markUnpublishedChanges();
+    markUnpublishedChanges("Settings/support/contact");
     await loadData();
     renderAdmin();
     setStatus("Contact row added.");
@@ -1461,7 +1513,7 @@ function bindTabEvents(content) {
       values.sortOrder = Number(values.sortOrder || 0);
       await api(`/api/contact-methods/${form.dataset.contactEditForm}`, { method: "PUT", body: values });
       state.editingContactMethodId = null;
-      markUnpublishedChanges();
+      markUnpublishedChanges("Settings/support/contact");
       await loadData();
       renderAdmin();
       setStatus("Contact row updated.");
@@ -1472,7 +1524,7 @@ function bindTabEvents(content) {
     button.addEventListener("click", async () => {
       await api(`/api/contact-methods/${button.dataset.deleteContactMethod}`, { method: "DELETE", body: {} });
       if (Number(state.editingContactMethodId) === Number(button.dataset.deleteContactMethod)) state.editingContactMethodId = null;
-      markUnpublishedChanges();
+      markUnpublishedChanges("Settings/support/contact");
       await loadData();
       renderAdmin();
       setStatus("Contact row hidden.");
@@ -1581,7 +1633,7 @@ function bindTabEvents(content) {
       settingsForm.append(hidden);
     }
     await api("/api/settings", { method: "PUT", body: new FormData(settingsForm) });
-    markUnpublishedChanges();
+    markUnpublishedChanges("Settings/support/contact");
     await loadData();
     renderAdmin();
     setStatus("Settings saved.");
@@ -1690,7 +1742,7 @@ function bindTabEvents(content) {
     button.addEventListener("click", async (event) => {
       event.stopPropagation();
       await api(`/api/downloads/${button.dataset.archiveDownload}/archive`, { method: "POST", body: {} });
-      markUnpublishedChanges();
+      markUnpublishedChanges("Downloads");
       if (Number(state.selectedDownloadId) === Number(button.dataset.archiveDownload)) {
         state.selectedDownloadId = null;
         state.showDownloadEditor = false;
@@ -1704,6 +1756,14 @@ function bindTabEvents(content) {
   const newProductBtn = content.querySelector("#newProductBtn");
   if (newProductBtn) newProductBtn.addEventListener("click", () => {
     state.showProductForm = true;
+    state.editingProductId = null;
+    state.editingProduct = null;
+    renderAdmin();
+  });
+
+  const closeProductEditorBtn = content.querySelector("#closeProductEditorBtn");
+  if (closeProductEditorBtn) closeProductEditorBtn.addEventListener("click", () => {
+    state.showProductForm = false;
     state.editingProductId = null;
     state.editingProduct = null;
     renderAdmin();
@@ -1740,7 +1800,7 @@ function bindTabEvents(content) {
   if (categoryForm) categoryForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     await api("/api/categories", { method: "POST", body: formValues(categoryForm) });
-    markUnpublishedChanges();
+    markUnpublishedChanges("Products");
     await loadData();
     renderAdmin();
     setStatus("Category created.");
@@ -1750,7 +1810,7 @@ function bindTabEvents(content) {
   if (fileForm) fileForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     await api("/api/files/upload", { method: "POST", body: new FormData(fileForm) });
-    markUnpublishedChanges();
+    markUnpublishedChanges("Media/files");
     await loadData();
     renderAdmin();
     setStatus("File uploaded.");
@@ -1768,7 +1828,7 @@ function bindTabEvents(content) {
     });
     if (result.download?.id) state.selectedDownloadId = result.download.id;
     state.showDownloadEditor = true;
-    markUnpublishedChanges();
+    markUnpublishedChanges("Downloads");
     await loadData();
     renderAdmin();
     setStatus(wasEditing ? "Download saved." : "Download object created.");
@@ -1784,7 +1844,7 @@ function bindTabEvents(content) {
     values.deprecated = Boolean(versionForm.querySelector("[name='deprecated']").checked);
     values.releaseNotesMode = versionForm.querySelector("[name='releaseNotesSource']")?.checked ? "html" : "plain";
     await api(`/api/downloads/${downloadId}/versions`, { method: "POST", body: values });
-    markUnpublishedChanges();
+    markUnpublishedChanges("Downloads");
     await loadData();
     renderAdmin();
     setStatus("Version added.");
@@ -1797,14 +1857,22 @@ function bindTabEvents(content) {
     values.downloadIds = checkedNumbers(packForm, "downloadIds");
     values.autoGenerateZip = Boolean(packForm.querySelector("[name='autoGenerateZip']").checked);
     await api("/api/software-bundles", { method: "POST", body: values });
-    markUnpublishedChanges();
+    markUnpublishedChanges("Software Bundles");
     await loadData();
     renderAdmin();
     setStatus("Software Bundle created.");
   });
 
   const productForm = content.querySelector("#productForm");
-  if (productForm) productForm.addEventListener("submit", async (event) => {
+  if (productForm) {
+    const dirtyState = content.querySelector("#productDirtyState");
+    productForm.addEventListener("input", () => {
+      if (dirtyState) dirtyState.textContent = "Unsaved changes.";
+    });
+    productForm.addEventListener("change", () => {
+      if (dirtyState) dirtyState.textContent = "Unsaved changes.";
+    });
+    productForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const values = formValues(productForm);
     values.categoryId = values.categoryId ? Number(values.categoryId) : null;
@@ -1822,14 +1890,15 @@ function bindTabEvents(content) {
     values.longDescriptionMode = productForm.querySelector("[name='longDescriptionSource']")?.checked ? "html" : "plain";
     const path = state.editingProductId ? `/api/products/${state.editingProductId}` : "/api/products";
     await api(path, { method: state.editingProductId ? "PUT" : "POST", body: values });
-    markUnpublishedChanges();
+    markUnpublishedChanges("Products");
     state.showProductForm = false;
     state.editingProductId = null;
     state.editingProduct = null;
     await loadData();
     renderAdmin();
     setStatus("Product saved.");
-  });
+    });
+  }
 
   const inviteCreateForm = content.querySelector("#inviteCreateForm");
   if (inviteCreateForm) inviteCreateForm.addEventListener("submit", async (event) => {

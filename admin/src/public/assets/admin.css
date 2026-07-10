@@ -1,10 +1,11 @@
 :root {
   color-scheme: light;
-  --bg: #f6f7f9;
+  --bg: #eef2f6;
   --panel: #ffffff;
   --text: #17202a;
-  --muted: #667085;
-  --line: #d9dee7;
+  --muted: #526071;
+  --line: #cfd7e3;
+  --line-strong: #b7c1d0;
   --accent: #0b6bcb;
   --accent-dark: #084f95;
   --danger: #b42318;
@@ -134,7 +135,7 @@ a {
 
 .panel {
   background: var(--panel);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   box-shadow: var(--shadow);
   padding: 16px;
@@ -158,7 +159,7 @@ a {
 }
 
 .tabs button {
-  background: #fff;
+  background: #f9fbfd;
   color: var(--text);
   border: 1px solid var(--line);
 }
@@ -178,7 +179,7 @@ a {
 
 .subtabs button {
   min-height: 34px;
-  background: #fff;
+  background: #f9fbfd;
   color: var(--text);
   border: 1px solid var(--line);
 }
@@ -235,7 +236,7 @@ select,
 textarea {
   width: 100%;
   min-height: 36px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 4px;
   padding: 7px 9px;
   color: var(--text);
@@ -284,10 +285,10 @@ textarea {
 }
 
 .item {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   padding: 10px;
-  background: #fbfcfe;
+  background: #f9fbfd;
 }
 
 .item h3 {
@@ -476,11 +477,11 @@ button.approve {
 }
 
 .form-section {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
   margin: 0;
   padding: 12px;
-  background: #fbfcfe;
+  background: #f7f9fc;
 }
 
 .form-section legend {
@@ -516,7 +517,7 @@ button.approve {
   max-height: 300px;
   overflow: auto;
   resize: vertical;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 4px;
   background: #f8fafc;
   padding: 6px;
@@ -527,7 +528,7 @@ button.approve {
   grid-template-columns: auto 44px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 4px;
   padding: 6px;
   background: #fff;
@@ -786,7 +787,7 @@ pre {
 }
 
 .contact-methods-panel {
-  background: #fff;
+  background: #f9fbfd;
 }
 
 .contact-method-form {
@@ -822,6 +823,49 @@ pre {
   white-space: nowrap;
 }
 
+.editor-actionbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #f8fbff;
+  padding: 10px;
+  box-shadow: 0 6px 16px rgba(23, 32, 42, 0.08);
+}
+
+.editor-actionbar > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.publish-state-card {
+  border-width: 1px;
+}
+
+.publish-state-pending {
+  border-color: #f6c56b;
+  background: #fff8e8;
+}
+
+.publish-state-clean {
+  border-color: #9ed7b4;
+  background: #effaf3;
+}
+
+.publish-state-card h3 {
+  margin-bottom: 6px;
+}
+
+.publish-state-card p {
+  margin: 4px 0;
+}
+
 @media (max-width: 760px) {
   .topbar,
   .session {
@@ -837,6 +881,7 @@ pre {
   .download-row,
   .user-row,
   .link-result,
+  .editor-actionbar,
   .contact-method-row,
   .contact-method-edit,
   .contact-method-form,
@@ -857,6 +902,7 @@ pre {
 
   .product-row,
   .download-row,
+  .editor-actionbar,
   .mini-row {
     flex-direction: column;
   }
