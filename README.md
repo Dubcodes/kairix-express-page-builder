@@ -99,7 +99,7 @@ Do not commit `.env`, SQLite files, uploaded customer files, or generated build 
 
 ## Docker Compose / Portainer Git Stack
 
-The compose stack runs the Page Manager admin/backend plus an optional nginx `public-preview` service for the generated static site.
+The compose stack runs the Page Manager admin/backend plus an optional nginx `public-preview` service for the generated static site. The preview service builds a small nginx image from `docker/nginx-preview.Dockerfile`, so no host bind mount is required for the nginx config.
 
 Ports:
 
@@ -128,6 +128,7 @@ Mode B: separate static public preview URL
 - Set `PUBLIC_SITE_BASE_PATH=` for a root static preview, or `/preview` if the static preview should also live under `/preview/`.
 - `docker-compose.yml` intentionally uses `${PUBLIC_SITE_BASE_PATH-/preview}` so an empty value is preserved. Do not change it to `${PUBLIC_SITE_BASE_PATH:-/preview}` unless you want empty values to fall back to `/preview`.
 - The nginx preview config serves both `/` and `/preview/`, including `/preview/_astro/...` and `/preview/uploads/...`.
+- If a previous failed Portainer deploy created `docker/nginx-preview.conf` as a directory, delete/recreate the failed stack after pulling this fix.
 
 In production, put the Page Manager admin behind HTTPS using Cloudflare Tunnel, a reverse proxy, or another TLS proxy. Set:
 
