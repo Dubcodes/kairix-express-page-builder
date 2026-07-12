@@ -19,6 +19,35 @@ function resolveFromRoot(value, fallback) {
   return path.isAbsolute(input) ? input : path.resolve(projectRoot, input);
 }
 
+const badProductionSecrets = new Set([
+  "change-this-long-random-secret",
+  "change-this-long-random-secret-too",
+  "local-dev-change-me",
+  "use-a-long-random-secret",
+  "use-a-different-long-random-secret",
+  "replace-with-long-random-secret",
+  "replace-with-different-long-random-secret"
+]);
+
+function requireProductionSecret(name, value) {
+  const secret = String(value || "").trim();
+  if (process.env.NODE_ENV !== "production") return secret;
+  if (!secret || badProductionSecrets.has(secret)) {
+    throw new Error(`${name} must be set to a long random value in production.`);
+  }
+  return secret;
+}
+
+const sessionSecret = requireProductionSecret("SESSION_SECRET", process.env.SESSION_SECRET || "local-dev-change-me");
+const encryptionSecret = requireProductionSecret(
+  "ENCRYPTION_SECRET",
+  process.env.ENCRYPTION_SECRET || process.env.SESSION_SECRET || "local-dev-change-me"
+);
+
+if (process.env.NODE_ENV === "production" && sessionSecret === encryptionSecret) {
+  throw new Error("SESSION_SECRET and ENCRYPTION_SECRET must be different long random values in production.");
+}
+
 export const config = {
   projectRoot,
   adminSrcDir,
@@ -30,13 +59,13 @@ export const config = {
   publicBaseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:4321",
   publicSiteBasePath: process.env.PUBLIC_SITE_BASE_PATH ?? "/preview",
   adminBaseUrl: process.env.ADMIN_BASE_URL || "http://localhost:8080",
-  encryptionSecret: process.env.ENCRYPTION_SECRET || process.env.SESSION_SECRET || "local-dev-change-me",
+  encryptionSecret,
   aliexpressAuthUrl: process.env.ALIEXPRESS_AUTH_URL || "",
   aliexpressTokenUrl: process.env.ALIEXPRESS_TOKEN_URL || "",
   aliexpressApiUrl: process.env.ALIEXPRESS_API_URL || "",
   trustProxy: boolEnv("TRUST_PROXY", false),
   cookieSecure: boolEnv("COOKIE_SECURE", process.env.NODE_ENV === "production"),
-  sessionSecret: process.env.SESSION_SECRET || "local-dev-change-me",
+  sessionSecret,
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB || 25),
   allowedUploadMimeTypes: new Set([
     "image/jpeg",

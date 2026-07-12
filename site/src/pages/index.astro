@@ -12,7 +12,10 @@ const showCategories = s.homeShowCategories !== false;
 const showProducts = s.homeShowFeaturedProducts !== false;
 const showSupportCta = s.homeShowSupportCta !== false;
 const showDownloadsSummary = s.homeShowDownloadsSummary === true;
-const showTextBlock = s.homeTextBlockEnabled && (s.homeTextBlockHeading || s.homeTextBlockText || s.homeTextBlockImage);
+const blockImages = Array.isArray(s.homeTextBlockImages)
+  ? s.homeTextBlockImages
+  : (s.homeTextBlockImage ? [s.homeTextBlockImage] : []);
+const showTextBlock = s.homeTextBlockEnabled && (s.homeTextBlockHeading || s.homeTextBlockText || blockImages.length);
 ---
 <PublicLayout title="Home">
   <main>
@@ -25,12 +28,16 @@ const showTextBlock = s.homeTextBlockEnabled && (s.homeTextBlockHeading || s.hom
     </section>
     {showTextBlock && (
       <section class="section inner">
-        <article class:list={["card", "info-block", s.homeTextBlockImage && "info-block-with-media"]}>
+        <article class:list={["card", "info-block", blockImages.length && "info-block-with-media"]}>
           <div>
             {s.homeTextBlockHeading && <h2>{s.homeTextBlockHeading}</h2>}
             {s.homeTextBlockText && <div class="rich-text" set:html={s.homeTextBlockText} />}
           </div>
-          {s.homeTextBlockImage && <img class="info-block-image" src={assetPath(s.homeTextBlockImage)} alt="" loading="lazy">}
+          {blockImages.length > 0 && (
+            <div class="info-block-images">
+              {blockImages.map((image) => <img class="info-block-image" src={assetPath(image)} alt="" loading="lazy">)}
+            </div>
+          )}
         </article>
       </section>
     )}

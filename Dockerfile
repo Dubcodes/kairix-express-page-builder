@@ -9,7 +9,7 @@ RUN apt-get update \
 COPY package*.json ./
 COPY admin/package.json ./admin/package.json
 COPY site/package.json ./site/package.json
-RUN npm install
+RUN npm ci --omit=dev
 
 COPY . .
 

@@ -143,6 +143,24 @@ function fileLabelForUrl(url = "") {
   return file?.originalName || file?.original_name || "";
 }
 
+function imageUrlsFromSetting(value = "") {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+  } catch {
+    // Existing installs stored one image URL as plain text.
+  }
+  return [raw];
+}
+
+function fileIdsForUrls(urls = []) {
+  const wanted = new Set(urls.map(String));
+  return state.files.filter((item) => wanted.has(String(item.url || ""))).map((item) => item.id);
+}
+
 function imageSettingPicker(name, value = "") {
   return picker(name, imageFiles(), fileIdForUrl(value), "images", {
     single: true,
@@ -150,6 +168,18 @@ function imageSettingPicker(name, value = "") {
     hiddenName: name,
     hiddenValue: value || "",
     hiddenLabel: fileLabelForUrl(value),
+    searchPlaceholder: "Search images (SVG, PNG, JPG, WebP, GIF)"
+  });
+}
+
+function imageSettingMultiPicker(name, value = "") {
+  const imageUrls = imageUrlsFromSetting(value);
+  return picker(name, imageFiles(), fileIdsForUrls(imageUrls), "images", {
+    ordered: true,
+    valueField: "url",
+    hiddenName: name,
+    hiddenValue: JSON.stringify(imageUrls),
+    selectedValues: imageUrls,
     searchPlaceholder: "Search images (SVG, PNG, JPG, WebP, GIF)"
   });
 }
@@ -262,7 +292,7 @@ function pickerBody(inputId, title, detail = "") {
 }
 
 function pickerMeta(row, kind, inputId) {
-  if (kind === "files") {
+  if (kind === "files" || kind === "images") {
     const title = row.originalName || row.original_name || `File ${row.id}`;
     return `${mediaThumb(row)}${pickerBody(inputId, title, `${row.mimeType || row.mime_type || ""} · ${formatBytes(row.size)}`)}<a class="action-link mini-action" href="${escapeHtml(row.url || "#")}" target="_blank" rel="noopener noreferrer">Open</a>`;
   }
@@ -273,7 +303,7 @@ function pickerMeta(row, kind, inputId) {
 }
 
 function pickerSearchText(row, kind) {
-  if (kind === "files") return dataText(row.originalName, row.mimeType, row.size);
+  if (kind === "files" || kind === "images") return dataText(row.originalName, row.mimeType, row.size);
   if (kind === "products") return dataText(row.name, row.sku, row.category_name, row.import_sync_status);
   if (kind === "downloads") return dataText(row.name, row.type, latestVersionLabel(row));
   if (kind === "bundles") return dataText(row.name, row.description);
@@ -286,34 +316,37 @@ function pickerValue(row, field = "id") {
 
 function picker(name, rows, selected = [], kind = "items", options = {}) {
   const single = Boolean(options.single);
+  const ordered = Boolean(options.ordered);
   const valueField = options.valueField || "id";
-  const hiddenName = options.hiddenName || (single ? name : "");
+  const hiddenName = options.hiddenName || ((single || ordered) ? name : "");
   const hiddenValue = options.hiddenValue || "";
   const hiddenLabel = options.hiddenLabel || "";
   const searchPlaceholder = options.searchPlaceholder || `Search ${kind}`;
-  const inputName = single ? `${name}Selection` : name;
+  const inputName = (single || ordered) ? `${name}Selection` : name;
   const selectedSet = new Set((selected || []).map(Number));
+  const selectedValues = Array.isArray(options.selectedValues) ? options.selectedValues.map(String) : [];
   const selectedRow = rows.find((row) => selectedSet.has(Number(row.id)));
   const selectedTitle = selectedRow?.originalName || selectedRow?.original_name || selectedRow?.name || hiddenLabel;
   const selectedText = single
     ? selectedTitle ? `Selected: ${selectedTitle}` : hiddenValue ? "Selected file is missing" : "No image selected"
-    : `${selectedSet.size} selected`;
+    : `${ordered ? selectedValues.length || selectedSet.size : selectedSet.size} selected`;
   return `
-    <div class="picker ${single ? "picker-single" : ""}" data-picker="${name}" ${single ? `data-picker-mode="single" data-picker-value-field="${escapeHtml(valueField)}"` : ""}>
-      ${single ? `<input type="hidden" name="${escapeHtml(hiddenName)}" value="${escapeHtml(hiddenValue)}" data-picker-hidden data-picker-initial="${escapeHtml(hiddenValue)}" data-picker-initial-label="${escapeHtml(hiddenLabel)}">` : ""}
+    <div class="picker ${single ? "picker-single" : ""} ${ordered ? "picker-ordered" : ""}" data-picker="${name}" ${single ? `data-picker-mode="single"` : ""} ${ordered ? `data-picker-mode="ordered"` : ""} data-picker-value-field="${escapeHtml(valueField)}">
+      ${(single || ordered) ? `<input type="hidden" name="${escapeHtml(hiddenName)}" value="${escapeHtml(hiddenValue)}" data-picker-hidden data-picker-initial="${escapeHtml(hiddenValue)}" data-picker-initial-label="${escapeHtml(hiddenLabel)}">` : ""}
       <div class="picker-toolbar">
         <input data-picker-search placeholder="${escapeHtml(searchPlaceholder)}" aria-label="${escapeHtml(searchPlaceholder)}">
         <span class="muted picker-status" data-picker-count>${escapeHtml(selectedText)}</span>
         ${single ? "" : `<button class="secondary" type="button" data-picker-select-visible>Select all visible</button>`}
         <button class="secondary" type="button" data-picker-clear>Clear selected</button>
       </div>
+      ${ordered ? `<div class="picker-order-list" data-picker-order aria-label="Selected image order"></div>` : ""}
       <div class="picker-list">
         ${rows.map((row) => {
           const checked = selectedSet.has(Number(row.id));
           const inputId = `picker-${name}-${row.id}`;
           const value = pickerValue(row, valueField);
           return `
-            <div class="picker-row ${checked ? "picker-selected" : ""}" data-picker-row data-search="${escapeHtml(pickerSearchText(row, kind))}">
+            <div class="picker-row ${checked ? "picker-selected" : ""}" data-picker-row data-picker-title="${escapeHtml(row.originalName || row.original_name || row.name || `Item ${row.id}`)}" data-search="${escapeHtml(pickerSearchText(row, kind))}">
               <input id="${escapeHtml(inputId)}" type="checkbox" name="${escapeHtml(inputName)}" value="${row.id}" data-picker-value="${escapeHtml(value)}" ${checked ? "checked" : ""}>
               ${pickerMeta(row, kind, inputId)}
             </div>
@@ -689,9 +722,9 @@ function homePageView() {
             <label>Heading<input name="homeTextBlockHeading" value="${escapeHtml(s.homeTextBlockHeading || "")}"></label>
             <label class="wide">Body text<textarea name="homeTextBlockText">${escapeHtml(s.homeTextBlockText || "")}</textarea></label>
             <div class="wide">
-              <strong>Block image</strong>
-              <p class="field-help">Optional supporting image for the new customer block.</p>
-              ${imageSettingPicker("homeTextBlockImage", s.homeTextBlockImage)}
+              <strong>Block images</strong>
+              <p class="field-help">Optional supporting images for the new customer block. Images appear on the home page in the selected order.</p>
+              ${imageSettingMultiPicker("homeTextBlockImage", s.homeTextBlockImage)}
             </div>
           </div>
         </fieldset>
@@ -1692,7 +1725,41 @@ function bindTabEvents(content) {
     const search = pickerEl.querySelector("[data-picker-search]");
     const count = pickerEl.querySelector("[data-picker-count]");
     const single = pickerEl.dataset.pickerMode === "single";
+    const ordered = pickerEl.dataset.pickerMode === "ordered";
     const hidden = pickerEl.querySelector("[data-picker-hidden]");
+    const orderList = pickerEl.querySelector("[data-picker-order]");
+    let selectedOrder = [];
+    if (ordered && hidden?.value) {
+      try {
+        const parsed = JSON.parse(hidden.value);
+        if (Array.isArray(parsed)) selectedOrder = parsed.map(String).filter(Boolean);
+      } catch {
+        selectedOrder = [hidden.value].filter(Boolean);
+      }
+    }
+    const rowsByValue = () => new Map([...pickerEl.querySelectorAll("[data-picker-row]")].map((row) => {
+      const input = row.querySelector("input[type='checkbox']");
+      return [String(input?.dataset.pickerValue || ""), row];
+    }).filter(([value]) => value));
+    const renderOrder = () => {
+      if (!ordered || !orderList) return;
+      const byValue = rowsByValue();
+      selectedOrder = selectedOrder.filter((value) => byValue.get(value)?.querySelector("input[type='checkbox']")?.checked);
+      if (hidden) hidden.value = JSON.stringify(selectedOrder);
+      orderList.innerHTML = selectedOrder.map((value, index) => {
+        const row = byValue.get(value);
+        const title = row?.dataset.pickerTitle || value;
+        return `
+          <div class="picker-order-row" data-picker-order-row="${escapeHtml(value)}" title="${escapeHtml(title)}">
+            <span class="picker-order-index">${index + 1}</span>
+            <span class="picker-order-title">${escapeHtml(title)}</span>
+            <button class="secondary mini-action" type="button" data-picker-move="up" ${index === 0 ? "disabled" : ""} aria-label="Move ${escapeHtml(title)} up">Up</button>
+            <button class="secondary mini-action" type="button" data-picker-move="down" ${index === selectedOrder.length - 1 ? "disabled" : ""} aria-label="Move ${escapeHtml(title)} down">Down</button>
+            <button class="secondary mini-action" type="button" data-picker-remove-order aria-label="Remove ${escapeHtml(title)}">Remove</button>
+          </div>
+        `;
+      }).join("") || "<p class='muted'>No block images selected.</p>";
+    };
     const update = () => {
       const query = String(search?.value || "").trim().toLowerCase();
       let selected = 0;
@@ -1711,8 +1778,9 @@ function bindTabEvents(content) {
         row.classList.toggle("picker-selected", Boolean(checked));
       });
       if (hidden) hidden.value = selected ? selectedValue : hidden.dataset.pickerInitial || "";
+      if (ordered) renderOrder();
       if (count) {
-        if (!single) count.textContent = `${selected} selected`;
+        if (!single) count.textContent = `${ordered ? selectedOrder.length : selected} selected`;
         else if (selectedTitle) count.textContent = `Selected: ${selectedTitle}`;
         else if (hidden?.dataset.pickerInitial) count.textContent = "Selected file is missing";
         else count.textContent = "No image selected";
@@ -1726,20 +1794,51 @@ function bindTabEvents(content) {
           if (input !== event.target) input.checked = false;
         });
       }
+      if (ordered && event.target.matches("input[type='checkbox']")) {
+        const value = String(event.target.dataset.pickerValue || "");
+        selectedOrder = selectedOrder.filter((item) => item !== value);
+        if (event.target.checked && value) selectedOrder.push(value);
+      }
       update();
     });
     pickerEl.querySelector("[data-picker-select-visible]")?.addEventListener("click", () => {
       pickerEl.querySelectorAll("[data-picker-row]:not(.hidden) input[type='checkbox']").forEach((input) => {
         input.checked = true;
+        if (ordered) {
+          const value = String(input.dataset.pickerValue || "");
+          if (value && !selectedOrder.includes(value)) selectedOrder.push(value);
+        }
       });
       update();
       pickerEl.dispatchEvent(new Event("change", { bubbles: true }));
     });
     pickerEl.querySelector("[data-picker-clear]")?.addEventListener("click", () => {
       if (hidden) hidden.dataset.pickerInitial = "";
+      selectedOrder = [];
       pickerEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
         input.checked = false;
       });
+      update();
+      pickerEl.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    orderList?.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-picker-order-row]");
+      if (!row) return;
+      const value = row.dataset.pickerOrderRow || "";
+      const index = selectedOrder.indexOf(value);
+      if (index === -1) return;
+      if (event.target.matches("[data-picker-remove-order]")) {
+        selectedOrder.splice(index, 1);
+        const sourceRow = rowsByValue().get(value);
+        const input = sourceRow?.querySelector("input[type='checkbox']");
+        if (input) input.checked = false;
+      } else if (event.target.matches("[data-picker-move='up']") && index > 0) {
+        [selectedOrder[index - 1], selectedOrder[index]] = [selectedOrder[index], selectedOrder[index - 1]];
+      } else if (event.target.matches("[data-picker-move='down']") && index < selectedOrder.length - 1) {
+        [selectedOrder[index], selectedOrder[index + 1]] = [selectedOrder[index + 1], selectedOrder[index]];
+      } else {
+        return;
+      }
       update();
       pickerEl.dispatchEvent(new Event("change", { bubbles: true }));
     });

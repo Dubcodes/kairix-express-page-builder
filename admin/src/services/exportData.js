@@ -23,6 +23,19 @@ function boolSetting(value, defaultValue = false) {
   return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
 }
 
+function imageListSetting(value) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+  } catch {
+    return [raw];
+  }
+  return [];
+}
+
 function fileUrl(file) {
   if (!file) return null;
   return `/uploads/${file.stored_name}`;
@@ -55,6 +68,7 @@ function latestVersion(downloadId) {
 
 export async function buildExportData() {
   const settings = getSettings();
+  const homeTextBlockImages = imageListSetting(settings.homeTextBlockImage);
   const categories = db.prepare("SELECT * FROM categories WHERE archived = 0 ORDER BY sort_order, name").all();
   const files = db.prepare("SELECT * FROM files").all();
   const filesById = new Map(files.map((file) => [file.id, file]));
@@ -220,7 +234,8 @@ export async function buildExportData() {
       homeTextBlockEnabled: boolSetting(settings.homeTextBlockEnabled, false),
       homeTextBlockHeading: clean(settings.homeTextBlockHeading || ""),
       homeTextBlockText: clean(settings.homeTextBlockText || "", true),
-      homeTextBlockImage: settings.homeTextBlockImage || ""
+      homeTextBlockImage: homeTextBlockImages[0] || "",
+      homeTextBlockImages
     },
     categories: categories.map((category) => ({
       ...category,

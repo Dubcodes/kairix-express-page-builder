@@ -45,6 +45,11 @@ button:hover {
   background: var(--accent-dark);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 button.ghost {
   color: var(--accent);
   background: #eaf3ff;
@@ -639,6 +644,42 @@ button.approve {
   background: #eef7ff;
 }
 
+.picker-order-list {
+  display: grid;
+  gap: 5px;
+}
+
+.picker-order-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto auto;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  padding: 5px;
+}
+
+.picker-order-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  border-radius: 4px;
+  background: #eef1f5;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.picker-order-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
 .picker-single .picker-list {
   max-height: 240px;
 }
@@ -1046,6 +1087,14 @@ pre {
 
   .media-row {
     grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .picker-order-row {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .picker-order-row button {
+    grid-column: span 1;
   }
 
   .media-row .actions {
