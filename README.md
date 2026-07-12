@@ -144,6 +144,14 @@ ENCRYPTION_SECRET=replace-with-different-long-random-secret
 
 `SESSION_SECRET` and `ENCRYPTION_SECRET` are required in production, must be different, and must not use placeholder values. The app fails fast if production secrets are missing or still set to known defaults.
 
+Demo sample-data tools are disabled by default in production and Portainer deployments:
+
+```env
+ENABLE_SAMPLE_DATA_TOOLS=false
+```
+
+Set `ENABLE_SAMPLE_DATA_TOOLS=true` only temporarily when an Admin user needs the "Add demo sample batch" testing tool. Turn it off before sharing an admin demo with clients.
+
 ### Temporary client demo via Portainer
 
 1. Push the repo to GitHub.
@@ -153,7 +161,7 @@ ENCRYPTION_SECRET=replace-with-different-long-random-secret
 5. Deploy.
 6. Open the Page Manager admin URL.
 7. Complete first-run setup.
-8. Create sample/demo content or import safe demo content.
+8. Create sample/demo content manually, import safe demo content, or temporarily enable `ENABLE_SAMPLE_DATA_TOOLS=true` and use "Add demo sample batch".
 9. Click Publish.
 10. Test `/preview/` on the admin URL, or the public-preview URL if exposing it separately.
 11. Share only the public preview URL with clients unless they need admin access.

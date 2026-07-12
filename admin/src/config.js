@@ -65,6 +65,7 @@ export const config = {
   aliexpressApiUrl: process.env.ALIEXPRESS_API_URL || "",
   trustProxy: boolEnv("TRUST_PROXY", false),
   cookieSecure: boolEnv("COOKIE_SECURE", process.env.NODE_ENV === "production"),
+  sampleDataToolsEnabled: boolEnv("ENABLE_SAMPLE_DATA_TOOLS", process.env.NODE_ENV !== "production"),
   sessionSecret,
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB || 25),
   allowedUploadMimeTypes: new Set([

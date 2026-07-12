@@ -581,6 +581,16 @@ button.approve {
   margin-left: 6px;
 }
 
+.demo-tool-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin: 10px 0;
+  background: #fff8e8;
+  border-color: #f6c56b;
+}
+
 .category-field {
   align-content: start;
 }
@@ -1079,6 +1089,7 @@ pre {
   .contact-method-row,
   .contact-method-edit,
   .contact-method-form,
+  .demo-tool-card,
   .featured-status-panel,
   .mini-row {
     grid-template-columns: 1fr;

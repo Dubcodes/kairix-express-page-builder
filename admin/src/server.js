@@ -309,6 +309,12 @@ function requireSetupOpen(req, res, next) {
   next();
 }
 
+function requireAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: "Authentication required" });
+  if (req.user.role !== "Admin") return res.status(403).json({ error: "Admin permission required" });
+  next();
+}
+
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get("/healthz", (_req, res) => {
@@ -392,6 +398,7 @@ app.get("/api/me", (req, res) => {
     user: req.user || null,
     csrfToken: csrf,
     needsSetup: userCount() === 0,
+    sampleDataToolsEnabled: config.sampleDataToolsEnabled,
     roles: ROLES,
     permissions: {
       write: can(req.user, "write"),
@@ -1511,157 +1518,152 @@ function linkRelatedProduct(productId, relatedProductId, sortOrder = 0) {
   `).run(productId, relatedProductId, sortOrder);
 }
 
-app.post("/api/sample-data", requirePermission("write"), (req, res) => {
+function nextDemoBatchNumber() {
+  const sources = [
+    db.prepare("SELECT slug FROM categories WHERE slug LIKE 'demo-batch-%'").all(),
+    db.prepare("SELECT slug FROM products WHERE slug LIKE 'demo-batch-%'").all(),
+    db.prepare("SELECT slug FROM download_objects WHERE slug LIKE 'demo-batch-%'").all(),
+    db.prepare("SELECT slug FROM support_packs WHERE slug LIKE 'demo-batch-%'").all(),
+    db.prepare("SELECT stored_name AS slug FROM files WHERE stored_name LIKE 'demo/batch-%'").all()
+  ].flat();
+  const maxBatch = sources.reduce((max, row) => {
+    const match = String(row.slug || "").match(/(?:demo-batch-|batch-)(\d+)/i);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+  return maxBatch + 1;
+}
+
+app.post("/api/sample-data", requireAdmin, (req, res) => {
+  if (!config.sampleDataToolsEnabled) return res.status(403).json({ error: "Sample data tools are disabled." });
   const settings = getSettings();
-  if (!settings.brandName || settings.brandName.startsWith("Kairix Demo")) setSetting("brandName", "Kairix Demo Support");
+  if (!settings.brandName) setSetting("brandName", "Kairix Demo Support");
   if (!settings.introText) setSetting("introText", "Find product information, manuals, apps, firmware, setup files and support downloads.");
   if (!settings.defaultMarketplaceLabel) setSetting("defaultMarketplaceLabel", "Buy on AliExpress");
   if (!settings.marketplaceUrl) setSetting("marketplaceUrl", "https://example.com/kairix-demo-store");
-  if (!settings.footerText || settings.footerText.startsWith("Demo content.")) setSetting("footerText", "Demo content. Replace this footer in Settings.");
+  if (!settings.footerText) setSetting("footerText", "Demo content. Replace this footer in Settings.");
   if (!settings.contactFormEnabled) setSetting("contactFormEnabled", "true");
+  const batchNumber = nextDemoBatchNumber();
+  const prefix = `demo-batch-${batchNumber}`;
+  const titlePrefix = `Demo Batch ${batchNumber}`;
+  const counts = { categories: 0, products: 0, downloads: 0, versions: 0, bundles: 0, files: 0 };
   const tx = db.transaction(() => {
-    const smartControllers = ensureCategory("smart-controllers", "Smart Controllers", "Bluetooth and WiFi control products with apps, firmware and setup tools.");
-    const cameraAccessories = ensureCategory("camera-accessories", "Camera Accessories", "Demo camera control cables and setup accessories.");
+    const categories = [
+      ensureCategory(`${prefix}-controllers`, `${titlePrefix} Controllers`, `Fake controller products for ${titlePrefix}.`),
+      ensureCategory(`${prefix}-accessories`, `${titlePrefix} Accessories`, `Fake accessories for picker, category and filter testing.`),
+      ensureCategory(`${prefix}-sensors`, `${titlePrefix} Sensors`, `Fake sensor and module listings for long-list testing.`)
+    ];
+    counts.categories = categories.length;
 
-    const demoFiles = {
-      controllerGallery1: ensureDemoFile("Demo Bluetooth Controller - Image 1.svg", "demo-bluetooth-controller-image-1.svg", "image/svg+xml", demoSvg("Demo Bluetooth Controller", "Product image 1", "#eaf3ff", "#0b6bcb")),
-      controllerGallery2: ensureDemoFile("Demo Bluetooth Controller - Image 2.svg", "demo-bluetooth-controller-image-2.svg", "image/svg+xml", demoSvg("Bluetooth Controller Ports", "Product image 2", "#f4f7fb", "#0f766e")),
-      controllerGallery3: ensureDemoFile("Demo Bluetooth Controller - Image 3.svg", "demo-bluetooth-controller-image-3.svg", "image/svg+xml", demoSvg("Bluetooth Controller Package", "Product image 3", "#fff7ed", "#b44818")),
-      controllerDesc: ensureDemoFile("Demo Bluetooth Controller - Wiring Diagram.svg", "demo-bluetooth-controller-wiring-diagram.svg", "image/svg+xml", demoSvg("Controller Wiring Diagram", "Full-width description image", "#eef6ff", "#075bbb")),
-      controllerSetup: ensureDemoFile("Demo Bluetooth Controller - App Setup.svg", "demo-bluetooth-controller-app-setup.svg", "image/svg+xml", demoSvg("Controller App Setup", "Setup screenshot", "#ecfdf3", "#067647")),
-      relayGallery1: ensureDemoFile("Demo WiFi Relay Board - Image 1.svg", "demo-wifi-relay-board-image-1.svg", "image/svg+xml", demoSvg("Demo WiFi Relay Board", "Product image 1", "#eff8ff", "#0b6bcb")),
-      relayGallery2: ensureDemoFile("Demo WiFi Relay Board - Image 2.svg", "demo-wifi-relay-board-image-2.svg", "image/svg+xml", demoSvg("Relay Board Terminals", "Product image 2", "#f4f3ff", "#6941c6")),
-      relayGallery3: ensureDemoFile("Demo WiFi Relay Board - Image 3.svg", "demo-wifi-relay-board-image-3.svg", "image/svg+xml", demoSvg("Relay Board Mounting", "Product image 3", "#f0fdf4", "#15803d")),
-      relayDesc: ensureDemoFile("Demo WiFi Relay Board - Wiring Diagram.svg", "demo-wifi-relay-board-wiring-diagram.svg", "image/svg+xml", demoSvg("Relay Board Wiring Diagram", "Full-width description image", "#f8fafc", "#334155")),
-      relaySetup: ensureDemoFile("Demo WiFi Relay Board - Firmware Setup.svg", "demo-wifi-relay-board-firmware-setup.svg", "image/svg+xml", demoSvg("Relay Firmware Setup", "Setup screenshot", "#fff7ed", "#c2410c")),
-      cableGallery1: ensureDemoFile("Demo Camera Cable - Image 1.svg", "demo-camera-cable-image-1.svg", "image/svg+xml", demoSvg("Demo Camera Control Cable", "Product image 1", "#f7fee7", "#4d7c0f")),
-      cableGallery2: ensureDemoFile("Demo Camera Cable - Image 2.svg", "demo-camera-cable-image-2.svg", "image/svg+xml", demoSvg("Camera Cable Connectors", "Product image 2", "#fdf2f8", "#be185d")),
-      cableGallery3: ensureDemoFile("Demo Camera Cable - Image 3.svg", "demo-camera-cable-image-3.svg", "image/svg+xml", demoSvg("Camera Cable In Use", "Product image 3", "#eef2ff", "#4338ca")),
-      cableDesc: ensureDemoFile("Demo Camera Cable - Compatibility.svg", "demo-camera-cable-compatibility.svg", "image/svg+xml", demoSvg("Camera Cable Compatibility", "Full-width description image", "#f8fafc", "#475569")),
-      cableSetup: ensureDemoFile("Demo Camera Cable - Setup.svg", "demo-camera-cable-setup.svg", "image/svg+xml", demoSvg("Camera Cable Setup", "Setup screenshot", "#ecfeff", "#0891b2")),
-      android110: ensureDemoFile("Controller Mobile App 1.1.0 DEMO.txt", "controller-mobile-app-1.1.0-demo.txt", "text/plain", "DEMO placeholder for Controller Mobile App 1.1.0.\nUse the real APK or store link in production.\n"),
-      android100: ensureDemoFile("Controller Mobile App 1.0.0 DEMO.txt", "controller-mobile-app-1.0.0-demo.txt", "text/plain", "DEMO placeholder for Controller Mobile App 1.0.0 previous release.\n"),
-      windows200: ensureDemoFile("Controller Windows Utility 2.0.0 DEMO.txt", "controller-windows-utility-2.0.0-demo.txt", "text/plain", "DEMO placeholder for Windows installer 2.0.0.\n"),
-      windows150: ensureDemoFile("Controller Windows Utility 1.5.0 DEMO.txt", "controller-windows-utility-1.5.0-demo.txt", "text/plain", "DEMO placeholder for Windows installer 1.5.0 previous release.\n"),
-      firmware320: ensureDemoFile("Relay Board Firmware 3.2.0 DEMO.txt", "relay-board-firmware-3.2.0-demo.txt", "text/plain", "DEMO placeholder for firmware 3.2.0.\n"),
-      firmware300: ensureDemoFile("Relay Board Firmware 3.0.0 DEMO.txt", "relay-board-firmware-3.0.0-demo.txt", "text/plain", "DEMO placeholder for firmware 3.0.0 previous release.\n"),
-      controllerManual2026: ensureDemoFile("Bluetooth Controller Manual 2026.1 DEMO.txt", "bluetooth-controller-manual-2026.1-demo.txt", "text/plain", "DEMO manual placeholder for Bluetooth Controller Manual 2026.1.\n"),
-      controllerManual2025: ensureDemoFile("Bluetooth Controller Manual 2025.4 DEMO.txt", "bluetooth-controller-manual-2025.4-demo.txt", "text/plain", "DEMO manual placeholder for Bluetooth Controller Manual 2025.4.\n"),
-      relayManual2026: ensureDemoFile("Relay Board Manual 2026.1 DEMO.txt", "relay-board-manual-2026.1-demo.txt", "text/plain", "DEMO manual placeholder for Relay Board Manual 2026.1.\n"),
-      cableGuide2026: ensureDemoFile("Camera Cable Quick Start Guide 2026.1 DEMO.txt", "camera-cable-quick-start-guide-2026.1-demo.txt", "text/plain", "DEMO quick start guide placeholder for Camera Cable 2026.1.\n")
+    const makeFile = (originalName, storedName, mimeType, content) => {
+      counts.files += 1;
+      return ensureDemoFile(originalName, storedName, mimeType, content);
     };
 
-    const downloads = {
-      android: ensureDownloadObject({ slug: "controller-mobile-app", name: "Controller Mobile App", type: "Android", shortDescription: "Android setup app for Bluetooth controller and relay products.", externalUrl: "https://example.com/controller-mobile-app" }),
-      ios: ensureDownloadObject({ slug: "controller-ios-app", name: "Controller iOS App", type: "iOS", shortDescription: "iOS App Store link for controller setup.", externalUrl: "https://example.com/app-store/controller-ios-app" }),
-      windows: ensureDownloadObject({ slug: "controller-windows-utility", name: "Controller Windows Utility", type: "Windows", shortDescription: "Desktop utility for configuration, diagnostics and firmware preparation." }),
-      firmware: ensureDownloadObject({ slug: "relay-board-firmware", name: "Relay Board Firmware", type: "Firmware", shortDescription: "Firmware package for the demo WiFi relay board." }),
-      controllerManual: ensureDownloadObject({ slug: "bluetooth-controller-manual", name: "Bluetooth Controller Manual", type: "Manual", shortDescription: "Manual and wiring notes for the demo Bluetooth controller." }),
-      relayManual: ensureDownloadObject({ slug: "relay-board-manual", name: "Relay Board Manual", type: "Manual", shortDescription: "Manual and setup notes for the demo relay board." }),
-      cableGuide: ensureDownloadObject({ slug: "camera-cable-quick-start-guide", name: "Camera Cable Quick Start Guide", type: "Manual", shortDescription: "Quick start guide for the demo camera control cable." })
-    };
-
-    ensureDownloadVersion(downloads.android.id, { versionNumber: "1.1.0", releaseDate: "2026-06-15", fileId: demoFiles.android110.id, releaseNotes: "<p>Latest demo Android app with improved pairing guidance.</p>", isLatest: true, fileSize: "Demo TXT" });
-    ensureDownloadVersion(downloads.android.id, { versionNumber: "1.0.0", releaseDate: "2025-11-20", fileId: demoFiles.android100.id, releaseNotes: "<p>Initial demo Android app release.</p>", deprecated: true, warningText: "Previous demo release.", fileSize: "Demo TXT" });
-    ensureDownloadVersion(downloads.ios.id, { versionNumber: "1.1.0", releaseDate: "2026-06-15", externalUrl: "https://example.com/app-store/controller-ios-app", releaseNotes: "<p>Latest demo iOS App Store listing.</p>", isLatest: true, fileSize: "External link" });
-    ensureDownloadVersion(downloads.windows.id, { versionNumber: "2.0.0", releaseDate: "2026-05-10", fileId: demoFiles.windows200.id, releaseNotes: "<p>New diagnostics view and simplified device scan.</p>", isLatest: true, fileSize: "Demo TXT" });
-    ensureDownloadVersion(downloads.windows.id, { versionNumber: "1.5.0", releaseDate: "2025-09-18", fileId: demoFiles.windows150.id, releaseNotes: "<p>Previous Windows configuration utility.</p>", deprecated: true, fileSize: "Demo TXT" });
-    ensureDownloadVersion(downloads.firmware.id, { versionNumber: "3.2.0", releaseDate: "2026-04-02", fileId: demoFiles.firmware320.id, releaseNotes: "<p>Latest demo relay firmware with stability notes.</p>", isLatest: true, fileSize: "Demo TXT", checksum: "demo-sha256-placeholder" });
-    ensureDownloadVersion(downloads.firmware.id, { versionNumber: "3.0.0", releaseDate: "2025-12-08", fileId: demoFiles.firmware300.id, releaseNotes: "<p>Previous firmware package for compatibility testing.</p>", deprecated: true, warningText: "Use latest firmware unless support asks otherwise.", fileSize: "Demo TXT" });
-    ensureDownloadVersion(downloads.controllerManual.id, { versionNumber: "2026.1", releaseDate: "2026-01-12", fileId: demoFiles.controllerManual2026.id, releaseNotes: "<p>Updated wiring, pairing and troubleshooting notes.</p>", isLatest: true, fileSize: "Demo TXT" });
-    ensureDownloadVersion(downloads.controllerManual.id, { versionNumber: "2025.4", releaseDate: "2025-08-01", fileId: demoFiles.controllerManual2025.id, releaseNotes: "<p>Previous manual revision.</p>", deprecated: true, fileSize: "Demo TXT" });
-    ensureDownloadVersion(downloads.relayManual.id, { versionNumber: "2026.1", releaseDate: "2026-02-05", fileId: demoFiles.relayManual2026.id, releaseNotes: "<p>Relay wiring and safe setup guide.</p>", isLatest: true, fileSize: "Demo TXT" });
-    ensureDownloadVersion(downloads.cableGuide.id, { versionNumber: "2026.1", releaseDate: "2026-03-22", fileId: demoFiles.cableGuide2026.id, releaseNotes: "<p>Camera cable quick start and compatibility notes.</p>", isLatest: true, fileSize: "Demo TXT" });
-
-    const bluetoothPack = ensureSupportPack({
-      slug: "bluetooth-controller-support-pack",
-      name: "Bluetooth Controller Support Pack",
-      description: "Apps, desktop utility and manual for the demo Bluetooth controller.",
-      downloadIds: [downloads.android.id, downloads.ios.id, downloads.windows.id, downloads.controllerManual.id]
-    });
-    const relayPack = ensureSupportPack({
-      slug: "relay-board-support-pack",
-      name: "Relay Board Support Pack",
-      description: "Apps, Windows utility, firmware and manual for the demo relay board.",
-      downloadIds: [downloads.android.id, downloads.windows.id, downloads.firmware.id, downloads.relayManual.id]
-    });
-    const cablePack = ensureSupportPack({
-      slug: "camera-cable-support-pack",
-      name: "Camera Cable Support Pack",
-      description: "Quick start guide for the demo camera control cable.",
-      downloadIds: [downloads.cableGuide.id]
-    });
-
-    const bluetoothProduct = ensureProduct({
-      slug: "demo-bluetooth-controller",
-      name: "Demo Bluetooth Controller",
-      sku: "KX-CTRL-001",
-      versionLabel: "v1 hardware",
-      categoryId: smartControllers.id,
-      marketplaceUrl: "https://example.com/products/demo-bluetooth-controller",
-      shortDescription: "A demo Bluetooth controller with mobile app setup, Windows utility and manual downloads.",
-      longDescription: "<p>The demo Bluetooth controller shows how a product support page can combine product photos, setup screenshots, app downloads, manuals, marketplace links and related products.</p><p>Use this sample to test gallery thumbnails, Software Bundles, QR codes and version history links.</p>",
-      featured: true,
-      stockTracking: true,
-      stockCount: 12,
-      stockLowThreshold: 5,
-      stockDisplayMode: "friendly",
-      sortOrder: 0
-    });
-    const relayProduct = ensureProduct({
-      slug: "demo-wifi-relay-board",
-      name: "Demo WiFi Relay Board",
-      sku: "KX-RELAY-004",
-      versionLabel: "v2 board",
-      categoryId: smartControllers.id,
-      marketplaceUrl: "https://example.com/products/demo-wifi-relay-board",
-      shortDescription: "A demo WiFi relay board with firmware, desktop utility and wiring documentation.",
-      longDescription: "<p>The demo relay board page is useful for testing firmware downloads, warnings on older versions and related controller products.</p><p>It includes wiring diagrams, setup screenshots and latest support-pack downloads.</p>",
-      featured: true,
-      stockTracking: true,
-      stockCount: 4,
-      stockLowThreshold: 5,
-      stockDisplayMode: "friendly",
-      sortOrder: 1
-    });
-    const cableProduct = ensureProduct({
-      slug: "demo-camera-control-cable",
-      name: "Demo Camera Control Cable",
-      sku: "KX-CAM-CBL",
-      versionLabel: "Rev A",
-      categoryId: cameraAccessories.id,
-      marketplaceUrl: "https://example.com/products/demo-camera-control-cable",
-      shortDescription: "A demo camera cable with compatibility images and a quick start guide.",
-      longDescription: "<p>The demo camera control cable shows how accessories can have a simpler Software Bundle while still linking back to related controller products.</p>",
-      featured: false,
-      stockTracking: true,
-      stockCount: 0,
-      stockLowThreshold: 5,
-      stockDisplayMode: "friendly",
-      sortOrder: 2
+    const downloadSpecs = [
+      ["Android", "Mobile App", "Android setup app"],
+      ["iOS", "iOS App", "iOS store listing"],
+      ["Windows", "Windows Utility", "Desktop diagnostics utility"],
+      ["Mac", "Mac Utility", "macOS configuration utility"],
+      ["Firmware", "Firmware Pack", "Firmware package"],
+      ["Manual", "Owner Manual", "Owner manual"],
+      ["Manual", "Quick Start Guide", "Quick start guide"],
+      ["Other", "Compatibility Notes", "Compatibility notes"]
+    ];
+    const downloads = downloadSpecs.map(([type, label, description], index) => {
+      const slug = `${prefix}-${slugify(label, { lower: true, strict: true })}`;
+      const download = ensureDownloadObject({
+        slug,
+        name: `${titlePrefix} ${label}`,
+        type,
+        shortDescription: `${description} for ${titlePrefix}.`,
+        externalUrl: index === 1 ? `https://example.com/${prefix}/ios-app` : ""
+      });
+      counts.downloads += 1;
+      const latestFile = index === 1 ? null : makeFile(`${titlePrefix} ${label} 2.${batchNumber}.${index} DEMO.txt`, `batch-${batchNumber}-${index}-latest-demo.txt`, "text/plain", `Fake ${label} latest file for ${titlePrefix}.\n`);
+      ensureDownloadVersion(download.id, {
+        versionNumber: `2.${batchNumber}.${index}`,
+        releaseDate: `2026-${String((index % 9) + 1).padStart(2, "0")}-12`,
+        fileId: latestFile?.id,
+        externalUrl: index === 1 ? `https://example.com/${prefix}/ios-app/latest` : "",
+        releaseNotes: `<p>Latest fake ${label.toLowerCase()} release for ${titlePrefix}.</p>`,
+        isLatest: true,
+        fileSize: index === 1 ? "External link" : "Demo TXT"
+      });
+      counts.versions += 1;
+      if (index < 4) {
+        const oldFile = makeFile(`${titlePrefix} ${label} 1.${batchNumber}.${index} DEMO.txt`, `batch-${batchNumber}-${index}-previous-demo.txt`, "text/plain", `Fake ${label} previous file for ${titlePrefix}.\n`);
+        ensureDownloadVersion(download.id, {
+          versionNumber: `1.${batchNumber}.${index}`,
+          releaseDate: `2025-${String((index % 9) + 1).padStart(2, "0")}-08`,
+          fileId: oldFile.id,
+          releaseNotes: `<p>Previous fake ${label.toLowerCase()} release for ${titlePrefix}.</p>`,
+          deprecated: true,
+          warningText: "Previous demo release.",
+          fileSize: "Demo TXT"
+        });
+        counts.versions += 1;
+      }
+      return download;
     });
 
-    [
-      [bluetoothProduct.id, [demoFiles.controllerGallery1, demoFiles.controllerGallery2, demoFiles.controllerGallery3], "gallery"],
-      [bluetoothProduct.id, [demoFiles.controllerDesc], "description"],
-      [bluetoothProduct.id, [demoFiles.controllerSetup], "setup"],
-      [relayProduct.id, [demoFiles.relayGallery1, demoFiles.relayGallery2, demoFiles.relayGallery3], "gallery"],
-      [relayProduct.id, [demoFiles.relayDesc], "description"],
-      [relayProduct.id, [demoFiles.relaySetup], "setup"],
-      [cableProduct.id, [demoFiles.cableGallery1, demoFiles.cableGallery2, demoFiles.cableGallery3], "gallery"],
-      [cableProduct.id, [demoFiles.cableDesc], "description"],
-      [cableProduct.id, [demoFiles.cableSetup], "setup"]
-    ].forEach(([productId, files, kind]) => files.forEach((file, index) => linkProductImage(productId, file.id, kind, index)));
+    const bundles = [
+      ensureSupportPack({ slug: `${prefix}-starter-bundle`, name: `${titlePrefix} Starter Bundle`, description: `Fake starter apps and manuals for ${titlePrefix}.`, downloadIds: downloads.slice(0, 4).map((item) => item.id) }),
+      ensureSupportPack({ slug: `${prefix}-firmware-bundle`, name: `${titlePrefix} Firmware Bundle`, description: `Fake firmware and compatibility files for ${titlePrefix}.`, downloadIds: [downloads[2].id, downloads[4].id, downloads[7].id] }),
+      ensureSupportPack({ slug: `${prefix}-manuals-bundle`, name: `${titlePrefix} Manuals Bundle`, description: `Fake manuals and quick-start documents for ${titlePrefix}.`, downloadIds: downloads.slice(5).map((item) => item.id) })
+    ];
+    counts.bundles = bundles.length;
 
-    linkProductSupportPack(bluetoothProduct.id, bluetoothPack.id);
-    linkProductSupportPack(relayProduct.id, relayPack.id);
-    linkProductSupportPack(cableProduct.id, cablePack.id);
-    linkRelatedProduct(bluetoothProduct.id, relayProduct.id, 0);
-    linkRelatedProduct(relayProduct.id, bluetoothProduct.id, 0);
-    linkRelatedProduct(cableProduct.id, bluetoothProduct.id, 0);
+    const productKinds = ["Smart Hub", "Relay Board", "Sensor Kit", "Camera Cable", "Mount Pack", "Power Module", "Gateway", "Mini Controller", "Display Panel", "Cable Loom", "Test Adapter", "Outdoor Sensor"];
+    const publishStates = ["published", "ready", "draft", "needs_review"];
+    const stockStates = [
+      { stockTracking: true, stockCount: 28, stockDisplayMode: "friendly", stockSource: "manual" },
+      { stockTracking: true, stockCount: 8, stockDisplayMode: "friendly", stockSource: "manual" },
+      { stockTracking: true, stockCount: 3, stockDisplayMode: "friendly", stockSource: "manual" },
+      { stockTracking: true, stockCount: 0, stockDisplayMode: "friendly", stockSource: "manual" },
+      { stockTracking: true, stockCount: null, stockDisplayMode: "hidden", stockSource: "marketplace" },
+      { stockTracking: false, stockCount: null, stockDisplayMode: "friendly", stockSource: "unknown" }
+    ];
+    const products = productKinds.map((kind, index) => {
+      const slug = `${prefix}-${slugify(kind, { lower: true, strict: true })}-${index + 1}`;
+      const stock = stockStates[index % stockStates.length];
+      const product = ensureProduct({
+        slug,
+        name: `${titlePrefix} ${kind} ${index + 1}`,
+        sku: `DEMO-B${batchNumber}-P${String(index + 1).padStart(2, "0")}`,
+        versionLabel: `Batch ${batchNumber}.${index + 1}`,
+        categoryId: categories[index % categories.length].id,
+        marketplaceUrl: `https://example.com/products/${slug}`,
+        shortDescription: `Fake ${kind.toLowerCase()} product for long-list, picker, search and publish-state testing.`,
+        longDescription: `<p>${titlePrefix} ${kind} is fake sample content for testing product pages, media galleries, related products and Software Bundles.</p>`,
+        featured: index % 5 === 0,
+        publishState: publishStates[index % publishStates.length],
+        stockLowThreshold: 5,
+        sortOrder: batchNumber * 100 + index,
+        ...stock
+      });
+      counts.products += 1;
+      const gallery = [1, 2].map((imageNumber) => makeFile(
+        `${titlePrefix} ${kind} ${imageNumber}.svg`,
+        `batch-${batchNumber}-product-${index + 1}-gallery-${imageNumber}.svg`,
+        "image/svg+xml",
+        demoSvg(`${titlePrefix} ${kind}`, `Gallery ${imageNumber}`, imageNumber === 1 ? "#eff8ff" : "#f8fafc", index % 2 ? "#0f766e" : "#0b6bcb")
+      ));
+      const desc = makeFile(`${titlePrefix} ${kind} Diagram.svg`, `batch-${batchNumber}-product-${index + 1}-diagram.svg`, "image/svg+xml", demoSvg(`${kind} Diagram`, "Description image", "#fff7ed", "#b44818"));
+      const setup = makeFile(`${titlePrefix} ${kind} Setup.svg`, `batch-${batchNumber}-product-${index + 1}-setup.svg`, "image/svg+xml", demoSvg(`${kind} Setup`, "Setup image", "#ecfdf3", "#067647"));
+      gallery.forEach((file, fileIndex) => linkProductImage(product.id, file.id, "gallery", fileIndex));
+      linkProductImage(product.id, desc.id, "description", 0);
+      linkProductImage(product.id, setup.id, "setup", 0);
+      linkProductSupportPack(product.id, bundles[index % bundles.length].id);
+      if (index % 3 === 0) linkProductSupportPack(product.id, bundles[(index + 1) % bundles.length].id);
+      return product;
+    });
+    products.forEach((product, index) => {
+      linkRelatedProduct(product.id, products[(index + 1) % products.length].id, 0);
+      if (index % 2 === 0) linkRelatedProduct(product.id, products[(index + 2) % products.length].id, 1);
+    });
   });
   tx();
-  res.json({ ok: true });
+  res.json({ ok: true, batchNumber, label: titlePrefix, counts });
 });
 
 app.use("/uploads", express.static(config.uploadsDir, {

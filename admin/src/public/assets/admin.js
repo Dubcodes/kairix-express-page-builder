@@ -643,15 +643,26 @@ function renderTab() {
 }
 
 function dashboardView() {
+  const sampleTools = state.me?.sampleDataToolsEnabled
+    ? `
+      <div class="item demo-tool-card">
+        <div>
+          <h3>Demo sample data</h3>
+          <p class="muted">Testing tool. Adds fake products/downloads so you can test large lists. Disable in production with ENABLE_SAMPLE_DATA_TOOLS=false.</p>
+        </div>
+        <button id="sampleBtn" type="button">Add demo sample batch</button>
+      </div>
+    `
+    : "";
   return `
     <section class="panel">
       <h2>Page Manager overview</h2>
       ${unpublishedNotice()}
       <p class="muted">Create products, group downloads into Software Bundles, publish the static customer support site, and review basic analytics.</p>
       <div class="actions">
-        <button id="sampleBtn" type="button">Create rich sample data</button>
         <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Shows the last published static site.">Open public preview</a>
       </div>
+      ${sampleTools}
       ${hasUnpublishedChanges() ? `<p class="muted">Preview may not include current edits until you publish.</p>` : ""}
       <div class="list dashboard-stats">
         <button class="item stat-card" type="button" data-tab-jump="products" title="Open product and category management" aria-label="Open product and category management"><h3>${state.categories.length}</h3><p>Categories</p></button>
@@ -1626,11 +1637,12 @@ async function renderPublishReview() {
 function bindTabEvents(content) {
   const handlers = {
     sampleBtn: async () => {
-      await api("/api/sample-data", { method: "POST", body: {} });
+      const result = await api("/api/sample-data", { method: "POST", body: {} });
       markUnpublishedChanges("Products");
       await loadData();
       renderAdmin();
-      setStatus("Sample data created.");
+      const counts = result.counts || {};
+      setStatus(`Added Demo Batch ${result.batchNumber}: ${counts.products || 0} products, ${counts.downloads || 0} downloads, ${counts.bundles || 0} bundles.`);
     },
     publishBtn: async () => {
       const output = document.querySelector("#publishOutput");
