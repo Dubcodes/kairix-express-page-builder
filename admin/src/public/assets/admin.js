@@ -519,6 +519,42 @@ function unpublishedNotice() {
   return hasUnpublishedChanges() ? `<button class="notice notice-action" type="button" data-open-publish>Unpublished changes - publish needed.</button>` : "";
 }
 
+function hasPublishedSite() {
+  return Boolean(state.me?.hasPublishedSite);
+}
+
+function publicPreviewHref(pathname = "/") {
+  const base = state.me?.publicPreviewUrl || "/preview/";
+  if (pathname === "/" || !pathname) return base;
+  try {
+    const url = new URL(base, window.location.origin);
+    const root = url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`;
+    url.pathname = `${root}${String(pathname).replace(/^\/+/, "")}`.replace(/\/{2,}/g, "/");
+    return url.toString();
+  } catch {
+    return `/preview/${String(pathname).replace(/^\/+/, "")}`;
+  }
+}
+
+function previewLink(label, pathname = "/", title = "Shows the last successfully published static site.", className = "action-link") {
+  const attrs = `data-preview-link data-preview-path="${escapeHtml(pathname)}" data-preview-label="${escapeHtml(label)}" data-preview-title="${escapeHtml(title)}" data-preview-class="${escapeHtml(className)}"`;
+  if (!hasPublishedSite()) {
+    return `<span class="${escapeHtml(className)} disabled-link" ${attrs} aria-disabled="true" title="No published site yet. Click Publish first.">${escapeHtml(label)}</span>`;
+  }
+  return `<a class="${escapeHtml(className)}" ${attrs} href="${escapeHtml(publicPreviewHref(pathname))}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}">${escapeHtml(label)}</a>`;
+}
+
+function refreshPreviewLinks(root = document) {
+  root.querySelectorAll("[data-preview-link]").forEach((item) => {
+    item.outerHTML = previewLink(
+      item.dataset.previewLabel || item.textContent || "Open published site preview",
+      item.dataset.previewPath || "/",
+      item.dataset.previewTitle || "Shows the last successfully published static site.",
+      item.dataset.previewClass || "action-link"
+    );
+  });
+}
+
 function markUnpublishedChanges(area = "Content changes") {
   localStorage.setItem("kairixUnpublishedChanges", "1");
   const areas = new Set(unpublishedAreas());
@@ -660,8 +696,9 @@ function dashboardView() {
       ${unpublishedNotice()}
       <p class="muted">Create products, group downloads into Software Bundles, publish the static customer support site, and review basic analytics.</p>
       <div class="actions">
-        <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Shows the last published static site.">Open public preview</a>
+        ${previewLink("Open published site preview")}
       </div>
+      ${hasPublishedSite() ? "" : `<p class="muted">No published site yet. Click Publish first.</p>`}
       ${sampleTools}
       ${hasUnpublishedChanges() ? `<p class="muted">Preview may not include current edits until you publish.</p>` : ""}
       <div class="list dashboard-stats">
@@ -699,7 +736,7 @@ function homePageView() {
     <section class="panel">
       <div class="section-heading">
         <h2>Home Page</h2>
-        <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer">Open preview</a>
+        ${previewLink("Open published site preview")}
       </div>
       ${unpublishedNotice()}
       <p class="muted">Control the customer-facing home page. This does not change the Page Manager admin title.</p>
@@ -711,7 +748,7 @@ function homePageView() {
           </div>
           <div class="actions">
             <button type="submit">Save Home Page</button>
-            <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Shows the last published static site.">Open public preview</a>
+            ${previewLink("Open published site preview")}
           </div>
         </div>
         <fieldset class="wide form-section">
@@ -1156,14 +1193,19 @@ function publishView() {
     <section class="panel">
       <h2>Publish Review ${helpIcon("Review warnings, preview the site, then publish the static customer support site.")}</h2>
       <p class="muted">Review saved content, open the current preview, then publish the static customer support site.</p>
+      <div class="item publish-help-card">
+        <p>Saved Page Manager edits do not update the customer-facing preview until you publish.</p>
+        <p class="muted">The preview shows the last successfully published static site. If it shows a default nginx page, publish has not completed successfully or the wrong preview URL is being opened.</p>
+      </div>
       <div id="publishReview" class="list" tabindex="-1"></div>
       <div class="actions">
         <button id="publishBtn" type="button">Publish</button>
-        <a class="action-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Shows the last published static site.">Open public preview</a>
-        <a class="action-link secondary-link" href="/preview/" target="_blank" rel="noopener noreferrer" title="Preview home page">Home</a>
-        <a class="action-link secondary-link" href="/preview/downloads/" target="_blank" rel="noopener noreferrer" title="Preview downloads page">Downloads</a>
-        <a class="action-link secondary-link" href="/preview/support/" target="_blank" rel="noopener noreferrer" title="Preview support page">Support</a>
+        ${previewLink("Open published site preview")}
+        ${previewLink("Home", "/", "Preview home page", "action-link secondary-link")}
+        ${previewLink("Downloads", "/downloads/", "Preview downloads page", "action-link secondary-link")}
+        ${previewLink("Support", "/support/", "Preview support page", "action-link secondary-link")}
       </div>
+      ${hasPublishedSite() ? "" : `<p class="muted">No published site yet. Click Publish first.</p>`}
       ${unpublishedNote}
       <div id="publishOutput" class="publish-output" aria-live="polite"></div>
     </section>
@@ -1595,6 +1637,11 @@ async function renderPublishReview() {
   const target = document.querySelector("#publishReview");
   if (!target) return;
   const review = await api("/api/publish/preview");
+  state.me = {
+    ...(state.me || {}),
+    publicPreviewUrl: review.publicPreviewUrl || state.me?.publicPreviewUrl,
+    hasPublishedSite: Boolean(review.hasPublishedSite)
+  };
   const warnings = review.warnings || [];
   const events = review.recentPublishEvents || [];
   target.innerHTML = `
@@ -1656,7 +1703,9 @@ function bindTabEvents(content) {
           ${buildLogDetails(result.output || result.message || "")}
         `;
         clearUnpublishedChanges();
+        state.me = { ...(state.me || {}), hasPublishedSite: true };
         document.querySelectorAll("[data-open-publish]").forEach((notice) => notice.remove());
+        refreshPreviewLinks();
         await renderPublishReview();
       } catch (error) {
         output.innerHTML = `<p class="error">Publish failed.</p><p class="muted">${escapeHtml(error.message)}</p>`;

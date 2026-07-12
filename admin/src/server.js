@@ -164,6 +164,19 @@ function cleanRichInput(value, mode = "plain") {
   return textToParagraphHtml(raw);
 }
 
+function publicPreviewUrl(pathname = "/") {
+  const origin = String(config.publicBaseUrl || config.adminBaseUrl || "").replace(/\/+$/, "");
+  const base = String(config.publicSiteBasePath || "").trim().replace(/^\/+|\/+$/g, "");
+  const pathValue = String(pathname || "/");
+  const cleanPath = pathValue.startsWith("/") ? pathValue : `/${pathValue}`;
+  const fullPath = `/${[base, cleanPath.replace(/^\/+/, "")].filter(Boolean).join("/")}`.replace(/\/{2,}/g, "/");
+  return `${origin}${fullPath.endsWith("/") ? fullPath : `${fullPath}/`}`;
+}
+
+function hasPublishedSite() {
+  return Boolean(db.prepare("SELECT id FROM publish_events WHERE status = 'success' ORDER BY id DESC LIMIT 1").get());
+}
+
 function makeSlug(name, table, currentId = null) {
   const base = slugify(name || "item", { lower: true, strict: true }) || "item";
   let slug = base;
@@ -399,6 +412,8 @@ app.get("/api/me", (req, res) => {
     csrfToken: csrf,
     needsSetup: userCount() === 0,
     sampleDataToolsEnabled: config.sampleDataToolsEnabled,
+    publicPreviewUrl: publicPreviewUrl("/"),
+    hasPublishedSite: hasPublishedSite(),
     roles: ROLES,
     permissions: {
       write: can(req.user, "write"),
@@ -1327,6 +1342,8 @@ app.get("/api/publish/preview", requirePermission("publish"), (_req, res) => {
     counts: { products: products.length, downloads: downloads.length, softwareBundles: bundles.length },
     warnings,
     recentPublishEvents,
+    publicPreviewUrl: publicPreviewUrl("/"),
+    hasPublishedSite: hasPublishedSite(),
     ready: warnings.length === 0
   });
 });

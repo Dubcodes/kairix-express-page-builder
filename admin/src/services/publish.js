@@ -105,8 +105,15 @@ export async function publishSite(userId = null) {
     await fs.ensureDir(path.dirname(dataPath));
     await fs.writeJson(dataPath, data, { spaces: 2 });
     await storageProvider.copyToPublic(publicUploadsDir);
+    await fs.emptyDir(config.generatedSiteBuildDir);
+    const output = await run("npm", ["run", "build", "--workspace", "site"], {
+      env: {
+        ...process.env,
+        ASTRO_OUT_DIR: config.generatedSiteBuildDir
+      }
+    });
     await fs.emptyDir(config.generatedSiteDir);
-    const output = await run("npm", ["run", "build", "--workspace", "site"]);
+    await fs.copy(config.generatedSiteBuildDir, config.generatedSiteDir);
     const result = await deployProvider.deploy();
     db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("success", summarizeBuildOutput(output), userId);
     return { ok: true, ...result, output, generatedBundles };

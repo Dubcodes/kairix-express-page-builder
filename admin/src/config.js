@@ -55,6 +55,7 @@ export const config = {
   databasePath: resolveFromRoot(process.env.DATABASE_PATH, "./data/kairix.sqlite"),
   uploadsDir: resolveFromRoot(process.env.UPLOADS_DIR, "./uploads"),
   generatedSiteDir: resolveFromRoot(process.env.GENERATED_SITE_DIR, "./generated-site"),
+  generatedSiteBuildDir: resolveFromRoot(process.env.PUBLIC_BUILD_TEMP_DIR, "./.cache/generated-site-build"),
   backupsDir: resolveFromRoot(process.env.BACKUPS_DIR, "./data/backups"),
   publicBaseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:4321",
   publicSiteBasePath: process.env.PUBLIC_SITE_BASE_PATH ?? "/preview",
