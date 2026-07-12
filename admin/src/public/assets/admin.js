@@ -25,6 +25,7 @@ const state = {
   downloadSearch: "",
   mediaSearch: "",
   mediaFilter: "all",
+  showArchivedProducts: false,
   bundleSearch: "",
   userSearch: "",
   selectedDownloadId: null,
@@ -80,7 +81,12 @@ async function api(path, options = {}) {
     body: options.body instanceof FormData ? options.body : options.body ? JSON.stringify(options.body) : undefined
   });
   const json = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(json.error || json.details || "Request failed");
+  if (!response.ok) {
+    const error = new Error(json.error || json.details || "Request failed");
+    error.data = json;
+    error.status = response.status;
+    throw error;
+  }
   return json;
 }
 
@@ -131,6 +137,35 @@ function categoryDatalistOptions() {
 
 function imageFiles() {
   return state.files.filter(isImageFile);
+}
+
+function normalizeProductState(productOrState = "") {
+  const value = typeof productOrState === "object"
+    ? String(productOrState.publish_state || productOrState.status || "").toLowerCase()
+    : String(productOrState || "").toLowerCase();
+  if (typeof productOrState === "object" && Number(productOrState.archived || 0)) return "archived";
+  if (value === "published") return "published";
+  if (value === "not_ready" || value === "ready" || value === "needs_review") return "not_ready";
+  if (value === "archived") return "archived";
+  return "draft";
+}
+
+function productStateLabel(productOrState = "") {
+  const stateValue = normalizeProductState(productOrState);
+  return {
+    draft: "Draft",
+    not_ready: "Not ready",
+    published: "Published",
+    archived: "Archived"
+  }[stateValue] || "Draft";
+}
+
+function isArchivedProduct(product) {
+  return normalizeProductState(product) === "archived";
+}
+
+function activeProducts() {
+  return state.products.filter((product) => !isArchivedProduct(product));
 }
 
 function fileIdForUrl(url = "") {
@@ -429,6 +464,7 @@ function adminStockMarkup(product) {
 function semanticType(value = "") {
   const text = String(value || "").toLowerCase();
   if (/success|published|active|complete|valid|available/.test(text)) return "success";
+  if (/not ready/.test(text)) return "warning";
   if (/ready|latest/.test(text)) return "ready";
   if (/needs|warning|pending|review|low stock/.test(text)) return "warning";
   if (/almost out/.test(text)) return "almost-out";
@@ -589,7 +625,7 @@ async function loadData() {
   const [settings, categories, products, files, downloads, packs, contactMethods, aliexpress] = await Promise.all([
     api("/api/settings"),
     api("/api/categories"),
-    api("/api/products"),
+    api("/api/products?includeArchived=1"),
     api("/api/files"),
     api("/api/downloads"),
     api("/api/software-bundles"),
@@ -679,6 +715,7 @@ function renderTab() {
 }
 
 function dashboardView() {
+  const visibleProducts = activeProducts();
   const sampleTools = state.me?.sampleDataToolsEnabled
     ? `
       <div class="item demo-tool-card">
@@ -703,7 +740,7 @@ function dashboardView() {
       ${hasUnpublishedChanges() ? `<p class="muted">Preview may not include current edits until you publish.</p>` : ""}
       <div class="list dashboard-stats">
         <button class="item stat-card" type="button" data-tab-jump="products" title="Open product and category management" aria-label="Open product and category management"><h3>${state.categories.length}</h3><p>Categories</p></button>
-        <button class="item stat-card" type="button" data-tab-jump="products" title="Open Products" aria-label="Open Products"><h3>${state.products.length}</h3><p>Products</p></button>
+        <button class="item stat-card" type="button" data-tab-jump="products" title="Open Products" aria-label="Open Products"><h3>${visibleProducts.length}</h3><p>Products</p></button>
         <button class="item stat-card" type="button" data-tab-jump="downloads" title="Open Downloads" aria-label="Open Downloads"><h3>${state.downloads.length}</h3><p>Downloads</p></button>
         <button class="item stat-card" type="button" data-tab-jump="bundles" title="Open Software Bundles" aria-label="Open Software Bundles"><h3>${state.packs.length}</h3><p>Software Bundles</p></button>
       </div>
@@ -730,7 +767,7 @@ function settingsView() {
 
 function homePageView() {
   const s = state.settings;
-  const featured = state.products.filter((product) => product.featured);
+  const featured = state.products.filter((product) => product.featured && normalizeProductState(product) === "published");
   const heroPlaceholder = s.brandName || "Your business name";
   return `
     <section class="panel">
@@ -972,6 +1009,7 @@ function filesView() {
             <div class="actions">
               <a class="action-link" href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer">Open</a>
               <button class="secondary" type="button" data-copy-value="${escapeHtml(file.url)}">Copy URL</button>
+              <button class="danger" type="button" data-delete-file="${file.id}" data-file-name="${escapeHtml(file.originalName)}">Delete</button>
             </div>
           </div>
         `).join("") || "<p class='muted'>No media files uploaded yet.</p>"}
@@ -1076,14 +1114,17 @@ function bundlesView() {
 
 function productsView() {
   const edit = state.editingProduct?.product || {};
+  const editState = normalizeProductState(edit);
   const editSupportPackIds = state.editingProduct?.supportPackIds || [];
   const editRelatedProductIds = state.editingProduct?.relatedProductIds || [];
   const editImages = state.editingProduct?.images || [];
   const editFileIds = (kind) => editImages.filter((image) => image.kind === kind).map((image) => image.file_id);
-  const products = state.products.filter((product) => {
-    const q = state.productSearch.toLowerCase();
-    return !q || product.name.toLowerCase().includes(q) || String(product.sku || "").toLowerCase().includes(q) || String(product.category_name || "").toLowerCase().includes(q);
-  });
+  const q = state.productSearch.toLowerCase();
+  const products = state.products
+    .filter((product) => state.showArchivedProducts || !isArchivedProduct(product))
+    .filter((product) => !q || product.name.toLowerCase().includes(q) || String(product.sku || "").toLowerCase().includes(q) || String(product.category_name || "").toLowerCase().includes(q))
+    .sort((a, b) => Number(isArchivedProduct(a)) - Number(isArchivedProduct(b)) || Number(b.featured || 0) - Number(a.featured || 0) || Number(a.sort_order || 0) - Number(b.sort_order || 0) || String(a.name).localeCompare(String(b.name)));
+  const archivedCount = state.products.filter(isArchivedProduct).length;
   return `
     <section class="panel">
       <div class="section-heading">
@@ -1092,11 +1133,12 @@ function productsView() {
       </div>
       <div class="toolbar">
         <input id="productSearch" placeholder="Search products by name, SKU, or category" value="${escapeHtml(state.productSearch)}">
+        <label class="check-row compact-toggle"><input type="checkbox" data-show-archived-products ${state.showArchivedProducts ? "checked" : ""}> Show archived${archivedCount ? ` (${archivedCount})` : ""}</label>
       </div>
       <div id="productList" class="list">${products.map((product) => `
-        <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""}" data-filter-row data-search="${escapeHtml(dataText(product.name, product.sku, product.category_name, product.short_description, adminStockText(product), product.import_sync_status))}">
+        <div class="item product-row ${product.import_sync_status ? "marketplace-synced" : ""} ${isArchivedProduct(product) ? "product-archived-row" : ""}" data-filter-row data-search="${escapeHtml(dataText(product.name, product.sku, product.category_name, product.short_description, adminStockText(product), product.import_sync_status, productStateLabel(product)))}">
           <div>
-            <h3>${escapeHtml(product.name)} ${pill(product.publish_state || product.status, semanticType(product.publish_state || product.status), product.publish_state === "draft" ? "Not published to public site" : "")}${product.featured ? ` ${pill("Featured", "featured", "Shown on the public homepage")}` : ""}${product.import_sync_status ? ` ${pill(`AliExpress ${product.import_sync_status}`, "synced", "Linked to marketplace data")}` : ""}</h3>
+            <h3>${escapeHtml(product.name)} ${pill(productStateLabel(product), semanticType(productStateLabel(product)), normalizeProductState(product) === "published" ? "Visible on the customer site preview after publishing" : "Not visible on the customer site preview")}${product.featured && normalizeProductState(product) === "published" ? ` ${pill("Featured", "featured", "Shown on the public homepage after publishing")}` : ""}${product.import_sync_status ? ` ${pill(`AliExpress ${product.import_sync_status}`, "synced", "Linked to marketplace data")}` : ""}</h3>
             <p>${escapeHtml(product.short_description || "")}</p>
             <p class="muted">${escapeHtml(product.category_name || "No category")} ${product.sku ? `- ${escapeHtml(product.sku)}` : ""} ${adminStockMarkup(product)}${product.last_imported_at ? ` - Synced ${escapeHtml(product.last_imported_at)}` : ""}</p>
           </div>
@@ -1131,18 +1173,19 @@ function productsView() {
             <label>Sort order<input name="sortOrder" type="number" value="${escapeHtml(edit.sort_order ?? 0)}"></label>
             <label>Publish state<select name="publishState">${[
               ["draft", "Draft"],
-              ["ready", "Ready"],
+              ["not_ready", "Not ready"],
               ["published", "Published"],
-              ["needs_review", "Needs review"],
               ["archived", "Archived"]
-            ].map(([value, label]) => `<option value="${value}" ${(edit.publish_state || "draft") === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+            ].map(([value, label]) => `<option value="${value}" ${editState === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+            <p class="field-help wide">Only Published products appear on the customer site preview after you publish the site.</p>
+            ${editState === "archived" ? `<p class="field-help wide warning-help">This product is archived and hidden from normal lists and the customer site preview.</p>` : ""}
           </div>
         </fieldset>
         <fieldset class="wide form-section">
           <legend>Public display</legend>
           <div class="form-grid">
             <label class="check-row wide"><input name="featured" type="checkbox" ${edit.featured ? "checked" : ""}> Show on homepage as featured product</label>
-            <p class="field-help wide">Featured products appear on the public homepage. If none are featured, recent products are shown.</p>
+            <p class="field-help wide">Featured products appear on the homepage only after the product is Published and the site is published.</p>
             <label>Color options<input name="colorOptions" value="${escapeHtml(edit.color_options || "")}"></label>
             <label class="wide">Option notes<textarea name="optionNotes">${escapeHtml(edit.option_notes || "")}</textarea></label>
             <label class="wide">Short description<textarea name="shortDescription">${escapeHtml(edit.short_description || "")}</textarea></label>
@@ -1179,7 +1222,7 @@ function productsView() {
         </fieldset>
         <fieldset class="wide form-section">
           <legend>Related products</legend>
-          ${picker("relatedProductIds", state.products.filter((product) => product.id !== edit.id), editRelatedProductIds, "products")}
+          ${picker("relatedProductIds", activeProducts().filter((product) => product.id !== edit.id), editRelatedProductIds, "products")}
         </fieldset>
         <div class="wide form-actions"><button type="submit">${state.editingProductId ? "Save product" : "Create product"}</button></div>
       </form>
@@ -1608,6 +1651,13 @@ async function openWarningTarget(warning) {
     scrollAndFocus(/stock/i.test(message) ? "#productStockSection" : "#productEditor");
     return;
   }
+  if (type === "product_visibility") {
+    state.tab = "products";
+    state.productSearch = "";
+    renderAdmin();
+    scrollAndFocus("#productList");
+    return;
+  }
   if (type === "download") {
     state.tab = "downloads";
     state.downloadSearch = "";
@@ -1643,14 +1693,28 @@ async function renderPublishReview() {
     hasPublishedSite: Boolean(review.hasPublishedSite)
   };
   const warnings = review.warnings || [];
+  const visibilityMessages = review.visibilityMessages || [];
   const events = review.recentPublishEvents || [];
+  const visibility = review.counts?.productVisibility || {};
   target.innerHTML = `
     ${publishStateCard()}
     <div class="summary-grid">
-      <div class="item"><h3>${review.counts.products}</h3><p>Products</p></div>
+      <div class="item"><h3>${review.counts.products}</h3><p>Published Products</p></div>
+      <div class="item"><h3>${review.counts.allProducts ?? review.counts.products}</h3><p>Total Products</p></div>
       <div class="item"><h3>${review.counts.downloads}</h3><p>Downloads</p></div>
       <div class="item"><h3>${review.counts.softwareBundles}</h3><p>Software Bundles</p></div>
       <div class="item"><h3>${warnings.length}</h3><p>Warnings</p></div>
+    </div>
+    <div class="item">
+      <h3>Product visibility</h3>
+      <p class="muted">Only products set to Published appear on the customer site preview after publishing.</p>
+      <p>${pill(`${visibility.published || 0} Published`, "success")} ${pill(`${visibility.draft || 0} Draft`, "neutral")} ${pill(`${visibility.not_ready || 0} Not ready`, "warning")} ${pill(`${visibility.archived || 0} Archived`, "disabled")}</p>
+      ${visibilityMessages.length ? `<div class="warning-list compact-warning-list">${visibilityMessages.map((message, index) => `
+        <button class="warning-row" type="button" data-visibility-message-index="${index}">
+          <span>${escapeHtml(message.message)}</span>
+          <strong>Review</strong>
+        </button>
+      `).join("")}</div>` : "<p class='muted'>Published products are ready for the customer site preview.</p>"}
     </div>
     <div class="item">
       <h3>Warnings</h3>
@@ -1678,6 +1742,9 @@ async function renderPublishReview() {
   `;
   target.querySelectorAll("[data-warning-index]").forEach((button) => {
     button.addEventListener("click", () => openWarningTarget(warnings[Number(button.dataset.warningIndex)]).catch((error) => setStatus(error.message, true)));
+  });
+  target.querySelectorAll("[data-visibility-message-index]").forEach((button) => {
+    button.addEventListener("click", () => openWarningTarget(visibilityMessages[Number(button.dataset.visibilityMessageIndex)]).catch((error) => setStatus(error.message, true)));
   });
 }
 
@@ -2101,6 +2168,10 @@ function bindTabEvents(content) {
     state.productSearch = event.target.value;
   });
   bindLiveFilter(productSearch, content.querySelector("#productList"));
+  content.querySelector("[data-show-archived-products]")?.addEventListener("change", (event) => {
+    state.showArchivedProducts = Boolean(event.target.checked);
+    renderAdmin();
+  });
 
   const downloadSearch = content.querySelector("#downloadSearch");
   if (downloadSearch) downloadSearch.addEventListener("input", (event) => {
@@ -2250,6 +2321,27 @@ function bindTabEvents(content) {
     await loadData();
     renderAdmin();
     setStatus("File uploaded.");
+  });
+
+  content.querySelectorAll("[data-delete-file]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const fileName = button.dataset.fileName || "this file";
+      if (!window.confirm(`Delete ${fileName}? This cannot be undone.`)) return;
+      try {
+        await api(`/api/files/${button.dataset.deleteFile}`, { method: "DELETE", body: {} });
+        markUnpublishedChanges("Media/files");
+        await loadData();
+        renderAdmin();
+        setStatus("File deleted.");
+      } catch (error) {
+        if (error.status === 409) {
+          const usages = error.data?.usages || [];
+          window.alert(`This file cannot be deleted because it is being used.${usages.length ? `\n\n${usages.join("\n")}` : ""}`);
+          return;
+        }
+        throw error;
+      }
+    });
   });
 
   const downloadForm = content.querySelector("#downloadForm");

@@ -214,6 +214,32 @@ function fileRecord(row) {
   };
 }
 
+function normalizeProductPublishState(value, archived = 0) {
+  if (archived || value === "archived") return "archived";
+  if (value === "published") return "published";
+  if (value === "not_ready" || value === "ready" || value === "needs_review") return "not_ready";
+  return "draft";
+}
+
+function productRecord(row) {
+  if (!row) return null;
+  const publishState = normalizeProductPublishState(row.publish_state || row.status, row.archived);
+  return {
+    ...row,
+    archived: publishState === "archived" ? 1 : Number(row.archived || 0),
+    publish_state: publishState,
+    status: publishState === "published" ? "published" : "draft",
+    featured: publishState === "archived" ? 0 : Number(row.featured || 0)
+  };
+}
+
+function productVisibilityCounts(products) {
+  return products.reduce((counts, product) => {
+    counts[normalizeProductPublishState(product.publish_state || product.status, product.archived)] += 1;
+    return counts;
+  }, { draft: 0, not_ready: 0, published: 0, archived: 0 });
+}
+
 function redirectUri() {
   return `${config.adminBaseUrl.replace(/\/$/, "")}/api/integrations/aliexpress/callback`;
 }
@@ -714,9 +740,76 @@ app.post("/api/files/upload", requirePermission("files"), upload.array("files", 
   res.json({ files: records });
 });
 
+function settingContainsFileUrl(value, url) {
+  if (!value || !url) return false;
+  if (String(value) === String(url)) return true;
+  const parsed = jsonSetting(value);
+  return Array.isArray(parsed) && parsed.map(String).includes(String(url));
+}
+
+function fileUsageLabels(file) {
+  if (!file) return [];
+  const labels = [];
+  const products = db.prepare(`
+    SELECT DISTINCT p.name
+    FROM product_images pi
+    JOIN products p ON p.id = pi.product_id
+    WHERE pi.file_id = ?
+    ORDER BY p.name
+  `).all(file.id);
+  products.forEach((row) => labels.push(`Product image: ${row.name}`));
+
+  const downloads = db.prepare(`
+    SELECT d.name, v.version_number
+    FROM download_versions v
+    JOIN download_objects d ON d.id = v.download_id
+    WHERE v.file_id = ?
+    ORDER BY d.name, v.version_number
+  `).all(file.id);
+  downloads.forEach((row) => labels.push(`Download version: ${row.name}${row.version_number ? ` ${row.version_number}` : ""}`));
+
+  const bundles = db.prepare("SELECT name FROM support_packs WHERE bundle_file_id = ? ORDER BY name").all(file.id);
+  bundles.forEach((row) => labels.push(`Software Bundle ZIP: ${row.name}`));
+
+  const settings = getSettings();
+  const url = `/uploads/${file.stored_name}`;
+  if (String(settings.logoFileId || "") === String(file.id) || settingContainsFileUrl(settings.logo, url)) labels.push("Settings: logo");
+  if (settingContainsFileUrl(settings.homeHeroImage, url)) labels.push("Home page: hero image");
+  if (settingContainsFileUrl(settings.homeTextBlockImage, url)) labels.push("Home page: customer block image");
+
+  return [...new Set(labels)];
+}
+
+function isSafeUploadPath(filePath) {
+  if (!filePath) return false;
+  const uploadRoot = path.resolve(config.uploadsDir);
+  const target = path.resolve(filePath);
+  const relative = path.relative(uploadRoot, target);
+  return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
 app.get("/api/files", requireAuth, (_req, res) => {
   const files = db.prepare("SELECT * FROM files ORDER BY created_at DESC").all().map(fileRecord);
   res.json({ files });
+});
+
+app.delete("/api/files/:id", requirePermission("files"), (req, res) => {
+  const id = Number(req.params.id);
+  const file = db.prepare("SELECT * FROM files WHERE id = ?").get(id);
+  if (!file) return res.status(404).json({ error: "File not found" });
+  const usages = fileUsageLabels(file);
+  if (usages.length) {
+    const remaining = usages.length - 3;
+    return res.status(409).json({
+      error: "File is in use",
+      usages: remaining > 0 ? [...usages.slice(0, 3), `and ${remaining} more`] : usages.slice(0, 3),
+      usageCount: usages.length
+    });
+  }
+  if (isSafeUploadPath(file.path) && fs.existsSync(file.path)) fs.rmSync(file.path, { force: true });
+  db.prepare("DELETE FROM files WHERE id = ?").run(id);
+  audit(req, "file_delete", { entityType: "file", entityId: id, message: `Deleted file ${file.original_name}` });
+  res.json({ ok: true });
 });
 
 app.get("/api/categories", requireAuth, (_req, res) => {
@@ -734,19 +827,20 @@ app.post("/api/categories", requirePermission("write"), (req, res) => {
   res.json({ category: db.prepare("SELECT * FROM categories WHERE id = ?").get(result.lastInsertRowid) });
 });
 
-app.get("/api/products", requireAuth, (_req, res) => {
+app.get("/api/products", requireAuth, (req, res) => {
+  const includeArchived = ["1", "true", "yes"].includes(String(req.query.includeArchived || "").toLowerCase());
   const products = db.prepare(`
     SELECT p.*, c.name AS category_name
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.archived = 0
-    ORDER BY p.featured DESC, p.sort_order, p.name
-  `).all();
+    ${includeArchived ? "" : "WHERE p.archived = 0"}
+    ORDER BY CASE WHEN p.archived = 1 OR p.publish_state = 'archived' THEN 1 ELSE 0 END, p.featured DESC, p.sort_order, p.name
+  `).all().map(productRecord);
   res.json({ products });
 });
 
 app.get("/api/products/:id", requireAuth, (req, res) => {
-  const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
+  const product = productRecord(db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id));
   if (!product) return res.status(404).json({ error: "Product not found" });
   const images = db.prepare(`
     SELECT pi.*, f.original_name, f.stored_name
@@ -769,7 +863,7 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
     longDescription: z.string().optional(),
     longDescriptionMode: z.enum(["plain", "html"]).optional(),
     status: z.enum(["draft", "published"]).default("draft"),
-    publishState: z.enum(["draft", "ready", "published", "needs_review", "archived"]).optional(),
+    publishState: z.enum(["draft", "not_ready", "published", "archived", "ready", "needs_review"]).optional(),
     featured: z.boolean().optional(),
     stockTracking: z.boolean().optional(),
     stockCount: z.number().nullable().optional(),
@@ -785,13 +879,15 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
     supportPackIds: z.array(z.number()).optional(),
     relatedProductIds: z.array(z.number()).optional()
   }).parse(req.body);
+  const publishState = normalizeProductPublishState(body.publishState || body.status);
+  const archived = publishState === "archived";
   const slug = makeSlug(body.name, "products");
   const tx = db.transaction(() => {
     const result = db.prepare(`
       INSERT INTO products
-      (name, slug, sku, version_label, category_id, marketplace_url, short_description, long_description, status, featured,
+      (name, slug, sku, version_label, category_id, marketplace_url, short_description, long_description, status, featured, archived,
        publish_state, stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order, color_options, option_notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       cleanText(body.name),
       slug,
@@ -801,9 +897,10 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
       cleanText(body.marketplaceUrl),
       cleanText(body.shortDescription),
       cleanRichInput(body.longDescription, body.longDescriptionMode),
-      body.status,
-      body.featured ? 1 : 0,
-      body.publishState || body.status,
+      publishState === "published" ? "published" : "draft",
+      !archived && body.featured ? 1 : 0,
+      archived ? 1 : 0,
+      publishState,
       body.stockTracking ? 1 : 0,
       body.stockCount ?? null,
       body.stockLowThreshold ?? 5,
@@ -818,7 +915,7 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
   });
   const id = tx();
   audit(req, "product_create", { entityType: "product", entityId: id, message: `Created product ${body.name}` });
-  res.json({ product: db.prepare("SELECT * FROM products WHERE id = ?").get(id) });
+  res.json({ product: productRecord(db.prepare("SELECT * FROM products WHERE id = ?").get(id)) });
 });
 
 app.post("/api/products/:id/duplicate", requirePermission("write"), (req, res) => {
@@ -829,10 +926,10 @@ app.post("/api/products/:id/duplicate", requirePermission("write"), (req, res) =
     const slug = makeSlug(name, "products");
     const result = db.prepare(`
       INSERT INTO products
-      (name, slug, sku, version_label, category_id, marketplace_url, short_description, long_description, status, featured,
+      (name, slug, sku, version_label, category_id, marketplace_url, short_description, long_description, status, featured, archived,
        publish_state, stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order, color_options, option_notes)
       SELECT ?, ?, sku, version_label, category_id, marketplace_url, short_description, long_description, 'draft', 0,
-       'draft', stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order + 1, color_options, option_notes
+       0, 'draft', stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order + 1, color_options, option_notes
       FROM products WHERE id = ?
     `).run(name, slug, current.id);
     const newId = result.lastInsertRowid;
@@ -843,7 +940,7 @@ app.post("/api/products/:id/duplicate", requirePermission("write"), (req, res) =
   });
   const id = tx();
   audit(req, "product_duplicate", { entityType: "product", entityId: id, message: `Duplicated product ${current.name}` });
-  res.json({ product: db.prepare("SELECT * FROM products WHERE id = ?").get(id) });
+  res.json({ product: productRecord(db.prepare("SELECT * FROM products WHERE id = ?").get(id)) });
 });
 
 app.put("/api/products/:id", requirePermission("write"), (req, res) => {
@@ -853,11 +950,13 @@ app.put("/api/products/:id", requirePermission("write"), (req, res) => {
   const body = req.body;
   const name = cleanText(body.name || current.name);
   const slug = name === current.name ? current.slug : makeSlug(name, "products", id);
+  const publishState = normalizeProductPublishState(body.publishState || body.status, 0);
+  const archived = publishState === "archived";
   const tx = db.transaction(() => {
     db.prepare(`
       UPDATE products SET
         name = ?, slug = ?, sku = ?, version_label = ?, category_id = ?, marketplace_url = ?,
-        short_description = ?, long_description = ?, status = ?, featured = ?, publish_state = ?,
+        short_description = ?, long_description = ?, status = ?, featured = ?, archived = ?, publish_state = ?,
         stock_tracking = ?, stock_count = ?, stock_low_threshold = ?, stock_display_mode = ?, stock_source = ?,
         sort_order = ?, color_options = ?, option_notes = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -870,9 +969,10 @@ app.put("/api/products/:id", requirePermission("write"), (req, res) => {
       cleanText(body.marketplaceUrl),
       cleanText(body.shortDescription),
       cleanRichInput(body.longDescription, body.longDescriptionMode),
-      body.status === "published" ? "published" : "draft",
-      body.featured ? 1 : 0,
-      body.publishState || body.status || "draft",
+      publishState === "published" ? "published" : "draft",
+      !archived && body.featured ? 1 : 0,
+      archived ? 1 : 0,
+      publishState,
       body.stockTracking ? 1 : 0,
       body.stockCount ?? null,
       body.stockLowThreshold ?? 5,
@@ -887,7 +987,7 @@ app.put("/api/products/:id", requirePermission("write"), (req, res) => {
   });
   tx();
   audit(req, "product_update", { entityType: "product", entityId: id, message: `Updated product ${name}` });
-  res.json({ product: db.prepare("SELECT * FROM products WHERE id = ?").get(id) });
+  res.json({ product: productRecord(db.prepare("SELECT * FROM products WHERE id = ?").get(id)) });
 });
 
 function saveProductRelations(productId, body) {
@@ -1307,12 +1407,21 @@ app.get("/api/audit-events", requirePermission("write"), (req, res) => {
 });
 
 app.get("/api/publish/preview", requirePermission("publish"), (_req, res) => {
-  const products = db.prepare("SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.archived = 0").all();
+  const products = db.prepare("SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id = p.category_id").all().map(productRecord);
+  const publishedProducts = products.filter((product) => product.publish_state === "published");
+  const visibility = productVisibilityCounts(products);
   const downloads = db.prepare("SELECT * FROM download_objects WHERE archived = 0").all();
   const bundles = listSoftwareBundles();
   const settings = getSettings();
   const warnings = [];
-  for (const product of products.filter((item) => ["ready", "published"].includes(item.publish_state) || item.status === "published")) {
+  const visibilityMessages = [];
+  if (products.length && visibility.published === 0) {
+    visibilityMessages.push({ entityType: "product_visibility", message: "0 products are currently published to the customer site preview. Set products to Published, save, then publish the site." });
+  }
+  if (visibility.draft) visibilityMessages.push({ entityType: "product_visibility", message: `${visibility.draft} Draft product${visibility.draft === 1 ? "" : "s"} will not appear publicly.` });
+  if (visibility.not_ready) visibilityMessages.push({ entityType: "product_visibility", message: `${visibility.not_ready} Not ready product${visibility.not_ready === 1 ? "" : "s"} will not appear publicly.` });
+  if (visibility.archived) visibilityMessages.push({ entityType: "product_visibility", message: `${visibility.archived} Archived product${visibility.archived === 1 ? " is" : "s are"} hidden.` });
+  for (const product of publishedProducts) {
     const imageCount = db.prepare("SELECT COUNT(*) AS count FROM product_images WHERE product_id = ?").get(product.id).count;
     const bundleCount = db.prepare("SELECT COUNT(*) AS count FROM product_support_packs WHERE product_id = ?").get(product.id).count;
     if (!imageCount) warnings.push({ entityType: "product", entityId: product.id, message: `${product.name} has no product images.` });
@@ -1339,7 +1448,8 @@ app.get("/api/publish/preview", requirePermission("publish"), (_req, res) => {
   if (!settings.brandName) warnings.push({ entityType: "settings", message: "Brand/store name is missing." });
   const recentPublishEvents = db.prepare("SELECT * FROM publish_events ORDER BY created_at DESC LIMIT 5").all();
   res.json({
-    counts: { products: products.length, downloads: downloads.length, softwareBundles: bundles.length },
+    counts: { products: publishedProducts.length, allProducts: products.length, downloads: downloads.length, softwareBundles: bundles.length, productVisibility: visibility },
+    visibilityMessages,
     warnings,
     recentPublishEvents,
     publicPreviewUrl: publicPreviewUrl("/"),
@@ -1470,6 +1580,7 @@ function ensureSupportPack({ slug, name, description, downloadIds }) {
 
 function ensureProduct(data) {
   const existing = db.prepare("SELECT * FROM products WHERE slug = ?").get(data.slug);
+  const publishState = normalizeProductPublishState(data.publishState || "published");
   const values = [
     data.name,
     data.slug,
@@ -1479,9 +1590,9 @@ function ensureProduct(data) {
     data.marketplaceUrl,
     data.shortDescription,
     data.longDescription,
-    "published",
-    data.featured ? 1 : 0,
-    data.publishState || "published",
+    publishState === "published" ? "published" : "draft",
+    publishState === "archived" ? 0 : data.featured ? 1 : 0,
+    publishState,
     data.stockTracking ? 1 : 0,
     data.stockCount ?? null,
     data.stockLowThreshold ?? 5,
@@ -1631,7 +1742,7 @@ app.post("/api/sample-data", requireAdmin, (req, res) => {
     counts.bundles = bundles.length;
 
     const productKinds = ["Smart Hub", "Relay Board", "Sensor Kit", "Camera Cable", "Mount Pack", "Power Module", "Gateway", "Mini Controller", "Display Panel", "Cable Loom", "Test Adapter", "Outdoor Sensor"];
-    const publishStates = ["published", "ready", "draft", "needs_review"];
+    const publishStates = ["published", "not_ready", "draft", "not_ready"];
     const stockStates = [
       { stockTracking: true, stockCount: 28, stockDisplayMode: "friendly", stockSource: "manual" },
       { stockTracking: true, stockCount: 8, stockDisplayMode: "friendly", stockSource: "manual" },

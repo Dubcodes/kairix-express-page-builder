@@ -235,6 +235,10 @@ export function migrate() {
   addColumn("support_packs", "archived", "INTEGER NOT NULL DEFAULT 0");
   addColumn("support_packs", "sort_order", "INTEGER NOT NULL DEFAULT 0");
 
+  db.prepare("UPDATE products SET publish_state = 'not_ready' WHERE publish_state IN ('ready', 'needs_review')").run();
+  db.prepare("UPDATE products SET archived = 1, featured = 0 WHERE publish_state = 'archived'").run();
+  db.prepare("UPDATE products SET publish_state = 'archived', featured = 0 WHERE archived = 1").run();
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

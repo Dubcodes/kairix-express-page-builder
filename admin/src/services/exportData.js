@@ -139,7 +139,7 @@ export async function buildExportData() {
     SELECT p.*, c.name AS category_name, c.slug AS category_slug
     FROM products p
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE p.archived = 0 AND (p.status = 'published' OR p.publish_state = 'published')
+    WHERE p.archived = 0 AND p.publish_state = 'published'
     ORDER BY p.featured DESC, p.sort_order, p.name
   `).all();
 
