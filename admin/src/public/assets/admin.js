@@ -228,7 +228,7 @@ function formatBytes(size) {
 
 function isImageFile(file) {
   const mime = String(file.mimeType || file.mime_type || "").toLowerCase();
-  const name = String(file.originalName || file.original_name || file.url || "").toLowerCase();
+  const name = String(file.originalName || file.original_name || file.name || file.url || "").toLowerCase();
   return mime.startsWith("image/") || /\.(svg|png|jpe?g|webp|gif)$/i.test(name);
 }
 
@@ -349,6 +349,21 @@ function pickerValue(row, field = "id") {
   return field === "url" ? row.url || "" : row[field] ?? row.id;
 }
 
+function pickerRowMarkup(name, row, kind, checked, options = {}) {
+  const valueField = options.valueField || "id";
+  const single = Boolean(options.single);
+  const ordered = Boolean(options.ordered);
+  const inputName = (single || ordered) ? `${name}Selection` : name;
+  const inputId = `picker-${name}-${row.id}`;
+  const value = pickerValue(row, valueField);
+  return `
+    <div class="picker-row ${checked ? "picker-selected" : ""}" data-picker-row data-picker-title="${escapeHtml(row.originalName || row.original_name || row.name || `Item ${row.id}`)}" data-search="${escapeHtml(pickerSearchText(row, kind))}">
+      <input id="${escapeHtml(inputId)}" type="checkbox" name="${escapeHtml(inputName)}" value="${row.id}" data-picker-value="${escapeHtml(value)}" ${checked ? "checked" : ""}>
+      ${pickerMeta(row, kind, inputId)}
+    </div>
+  `;
+}
+
 function picker(name, rows, selected = [], kind = "items", options = {}) {
   const single = Boolean(options.single);
   const ordered = Boolean(options.ordered);
@@ -357,7 +372,6 @@ function picker(name, rows, selected = [], kind = "items", options = {}) {
   const hiddenValue = options.hiddenValue || "";
   const hiddenLabel = options.hiddenLabel || "";
   const searchPlaceholder = options.searchPlaceholder || `Search ${kind}`;
-  const inputName = (single || ordered) ? `${name}Selection` : name;
   const selectedSet = new Set((selected || []).map(Number));
   const selectedValues = Array.isArray(options.selectedValues) ? options.selectedValues.map(String) : [];
   const selectedRow = rows.find((row) => selectedSet.has(Number(row.id)));
@@ -366,27 +380,19 @@ function picker(name, rows, selected = [], kind = "items", options = {}) {
     ? selectedTitle ? `Selected: ${selectedTitle}` : hiddenValue ? "Selected file is missing" : "No image selected"
     : `${ordered ? selectedValues.length || selectedSet.size : selectedSet.size} selected`;
   return `
-    <div class="picker ${single ? "picker-single" : ""} ${ordered ? "picker-ordered" : ""}" data-picker="${name}" ${single ? `data-picker-mode="single"` : ""} ${ordered ? `data-picker-mode="ordered"` : ""} data-picker-value-field="${escapeHtml(valueField)}">
+    <div class="picker ${single ? "picker-single" : ""} ${ordered ? "picker-ordered" : ""}" data-picker="${name}" data-picker-kind="${escapeHtml(kind)}" ${options.upload ? "data-picker-upload-enabled=\"true\"" : ""} ${options.uploadImageOnly ? "data-picker-upload-images=\"true\"" : ""} ${single ? `data-picker-mode="single"` : ""} ${ordered ? `data-picker-mode="ordered"` : ""} data-picker-value-field="${escapeHtml(valueField)}">
       ${(single || ordered) ? `<input type="hidden" name="${escapeHtml(hiddenName)}" value="${escapeHtml(hiddenValue)}" data-picker-hidden data-picker-initial="${escapeHtml(hiddenValue)}" data-picker-initial-label="${escapeHtml(hiddenLabel)}">` : ""}
       <div class="picker-toolbar">
         <input data-picker-search placeholder="${escapeHtml(searchPlaceholder)}" aria-label="${escapeHtml(searchPlaceholder)}">
         <span class="muted picker-status" data-picker-count>${escapeHtml(selectedText)}</span>
+        ${options.upload ? `<label class="picker-upload-button secondary">Upload<input type="file" multiple data-picker-upload ${options.uploadImageOnly ? `accept=".svg,.png,.jpg,.jpeg,.webp,.gif,image/svg+xml,image/png,image/jpeg,image/webp,image/gif"` : ""}></label>` : ""}
         ${single ? "" : `<button class="secondary" type="button" data-picker-select-visible>Select all visible</button>`}
         <button class="secondary" type="button" data-picker-clear>Clear selected</button>
       </div>
+      ${options.upload ? `<div class="picker-upload-results muted" data-picker-upload-results aria-live="polite"></div>` : ""}
       ${ordered ? `<div class="picker-order-list" data-picker-order aria-label="Selected image order"></div>` : ""}
       <div class="picker-list">
-        ${rows.map((row) => {
-          const checked = selectedSet.has(Number(row.id));
-          const inputId = `picker-${name}-${row.id}`;
-          const value = pickerValue(row, valueField);
-          return `
-            <div class="picker-row ${checked ? "picker-selected" : ""}" data-picker-row data-picker-title="${escapeHtml(row.originalName || row.original_name || row.name || `Item ${row.id}`)}" data-search="${escapeHtml(pickerSearchText(row, kind))}">
-              <input id="${escapeHtml(inputId)}" type="checkbox" name="${escapeHtml(inputName)}" value="${row.id}" data-picker-value="${escapeHtml(value)}" ${checked ? "checked" : ""}>
-              ${pickerMeta(row, kind, inputId)}
-            </div>
-          `;
-        }).join("") || "<p class='muted'>No items yet.</p>"}
+        ${rows.map((row) => pickerRowMarkup(name, row, kind, selectedSet.has(Number(row.id)), options)).join("") || "<p class='muted'>No items yet.</p>"}
       </div>
     </div>
   `;
@@ -572,7 +578,7 @@ function publicPreviewHref(pathname = "/") {
   }
 }
 
-function previewLink(label, pathname = "/", title = "Shows the last successfully published static site.", className = "action-link") {
+function previewLink(label, pathname = "/", title = "The preview shows the last successfully published customer site.", className = "action-link") {
   const attrs = `data-preview-link data-preview-path="${escapeHtml(pathname)}" data-preview-label="${escapeHtml(label)}" data-preview-title="${escapeHtml(title)}" data-preview-class="${escapeHtml(className)}"`;
   if (!hasPublishedSite()) {
     return `<span class="${escapeHtml(className)} disabled-link" ${attrs} aria-disabled="true" title="No published site yet. Click Publish first.">${escapeHtml(label)}</span>`;
@@ -583,9 +589,9 @@ function previewLink(label, pathname = "/", title = "Shows the last successfully
 function refreshPreviewLinks(root = document) {
   root.querySelectorAll("[data-preview-link]").forEach((item) => {
     item.outerHTML = previewLink(
-      item.dataset.previewLabel || item.textContent || "Open published site preview",
+      item.dataset.previewLabel || item.textContent || "Open customer site preview",
       item.dataset.previewPath || "/",
-      item.dataset.previewTitle || "Shows the last successfully published static site.",
+      item.dataset.previewTitle || "The preview shows the last successfully published customer site.",
       item.dataset.previewClass || "action-link"
     );
   });
@@ -733,7 +739,7 @@ function dashboardView() {
       ${unpublishedNotice()}
       <p class="muted">Create products, group downloads into Software Bundles, publish the static customer support site, and review basic analytics.</p>
       <div class="actions">
-        ${previewLink("Open published site preview")}
+        ${previewLink("Open customer site preview")}
       </div>
       ${hasPublishedSite() ? "" : `<p class="muted">No published site yet. Click Publish first.</p>`}
       ${sampleTools}
@@ -773,7 +779,7 @@ function homePageView() {
     <section class="panel">
       <div class="section-heading">
         <h2>Home Page</h2>
-        ${previewLink("Open published site preview")}
+        ${previewLink("Open customer site preview")}
       </div>
       ${unpublishedNotice()}
       <p class="muted">Control the customer-facing home page. This does not change the Page Manager admin title.</p>
@@ -785,7 +791,7 @@ function homePageView() {
           </div>
           <div class="actions">
             <button type="submit">Save Home Page</button>
-            ${previewLink("Open published site preview")}
+            ${previewLink("Open customer site preview")}
           </div>
         </div>
         <fieldset class="wide form-section">
@@ -993,6 +999,7 @@ function filesView() {
       <form id="fileForm" class="form-grid">
         <label class="wide">Upload files<input name="files" type="file" multiple></label>
         <button type="submit">Upload</button>
+        <div id="fileUploadResults" class="wide picker-upload-results muted" aria-live="polite"></div>
       </form>
       <div class="toolbar media-toolbar">
         <input id="mediaSearch" placeholder="Search media" value="${escapeHtml(state.mediaSearch)}">
@@ -1207,9 +1214,9 @@ function productsView() {
         </fieldset>
         <fieldset class="wide form-section">
           <legend>Images</legend>
-          <div><strong>Product gallery images</strong>${picker("galleryFileIds", state.files, editFileIds("gallery"), "files")}</div>
-          <div><strong>Description images</strong>${picker("descriptionFileIds", state.files, editFileIds("description"), "files")}</div>
-          <div><strong>App/setup screenshots</strong>${picker("setupFileIds", state.files, editFileIds("setup"), "files")}</div>
+          <div><strong>Product gallery images</strong>${picker("galleryFileIds", imageFiles(), editFileIds("gallery"), "images", { upload: true, uploadImageOnly: true })}</div>
+          <div><strong>Description images</strong>${picker("descriptionFileIds", imageFiles(), editFileIds("description"), "images", { upload: true, uploadImageOnly: true })}</div>
+          <div><strong>App/setup screenshots</strong>${picker("setupFileIds", imageFiles(), editFileIds("setup"), "images", { upload: true, uploadImageOnly: true })}</div>
         </fieldset>
         <fieldset class="wide form-section">
           <legend>Description</legend>
@@ -1238,12 +1245,12 @@ function publishView() {
       <p class="muted">Review saved content, open the current preview, then publish the static customer support site.</p>
       <div class="item publish-help-card">
         <p>Saved Page Manager edits do not update the customer-facing preview until you publish.</p>
-        <p class="muted">The preview shows the last successfully published static site. If it shows a default nginx page, publish has not completed successfully or the wrong preview URL is being opened.</p>
+        <p class="muted">The preview shows the last successfully published customer site. If it shows a default nginx page, publish has not completed successfully or the wrong preview URL is being opened.</p>
       </div>
       <div id="publishReview" class="list" tabindex="-1"></div>
       <div class="actions">
         <button id="publishBtn" type="button">Publish</button>
-        ${previewLink("Open published site preview")}
+        ${previewLink("Open customer site preview")}
         ${previewLink("Home", "/", "Preview home page", "action-link secondary-link")}
         ${previewLink("Downloads", "/downloads/", "Preview downloads page", "action-link secondary-link")}
         ${previewLink("Support", "/support/", "Preview support page", "action-link secondary-link")}
@@ -1817,12 +1824,12 @@ function bindTabEvents(content) {
 
   bindCopyButtons(content);
 
-  content.querySelectorAll("[data-preview-image]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      openImagePreview(button.dataset.previewImage || "", button.dataset.previewTitle || "");
-    });
+  content.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-preview-image]");
+    if (!button || !content.contains(button)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openImagePreview(button.dataset.previewImage || "", button.dataset.previewTitle || "");
   });
 
   content.querySelectorAll("[data-open-publish]").forEach((button) => {
@@ -1854,8 +1861,13 @@ function bindTabEvents(content) {
     const count = pickerEl.querySelector("[data-picker-count]");
     const single = pickerEl.dataset.pickerMode === "single";
     const ordered = pickerEl.dataset.pickerMode === "ordered";
+    const kind = pickerEl.dataset.pickerKind || "items";
+    const pickerName = pickerEl.dataset.picker || "";
+    const valueField = pickerEl.dataset.pickerValueField || "id";
     const hidden = pickerEl.querySelector("[data-picker-hidden]");
     const orderList = pickerEl.querySelector("[data-picker-order]");
+    const uploadInput = pickerEl.querySelector("[data-picker-upload]");
+    const uploadResults = pickerEl.querySelector("[data-picker-upload-results]");
     let selectedOrder = [];
     if (ordered && hidden?.value) {
       try {
@@ -1969,6 +1981,63 @@ function bindTabEvents(content) {
       }
       update();
       pickerEl.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    uploadInput?.addEventListener("change", async (event) => {
+      const pickedFiles = [...(event.target.files || [])];
+      const messages = [];
+      const uploadable = pickedFiles.filter((file) => {
+        if (pickerEl.dataset.pickerUploadImages === "true" && !isImageFile(file)) {
+          messages.push(`Failed: ${file.name} - image files only`);
+          return false;
+        }
+        return true;
+      });
+      if (!uploadable.length) {
+        if (uploadResults) uploadResults.innerHTML = messages.map((message) => `<p>${escapeHtml(message)}</p>`).join("");
+        event.target.value = "";
+        return;
+      }
+      try {
+        const formData = new FormData();
+        uploadable.forEach((file) => formData.append("files", file));
+        const response = await api("/api/files/upload", { method: "POST", body: formData });
+        const results = response.results || (response.files || []).map((file) => ({ file, reused: false, message: `Uploaded: ${file.originalName || file.original_name || "file"}` }));
+        const list = pickerEl.querySelector(".picker-list");
+        list?.querySelector("p.muted")?.remove();
+        results.forEach((result) => {
+          const file = result.file;
+          if (!file) return;
+          const existingIndex = state.files.findIndex((item) => Number(item.id) === Number(file.id));
+          if (existingIndex === -1) state.files.unshift(file);
+          else state.files[existingIndex] = file;
+          const rowValue = String(pickerValue(file, valueField));
+          let row = [...pickerEl.querySelectorAll("[data-picker-row]")].find((candidate) => {
+            const input = candidate.querySelector("input[type='checkbox']");
+            return String(input?.dataset.pickerValue || "") === rowValue;
+          });
+          if (!row && list) {
+            list.insertAdjacentHTML("afterbegin", pickerRowMarkup(pickerName, file, kind, true, { single, ordered, valueField }));
+            row = list.querySelector("[data-picker-row]");
+          }
+          const checkbox = row?.querySelector("input[type='checkbox']");
+          if (checkbox) {
+            checkbox.checked = true;
+            if (ordered && rowValue && !selectedOrder.includes(rowValue)) selectedOrder.push(rowValue);
+          }
+          messages.push(result.message || `${result.reused ? "Reused existing file" : "Uploaded"}: ${file.originalName || file.original_name || "file"}`);
+        });
+        if (uploadResults) uploadResults.innerHTML = messages.map((message) => `<p>${escapeHtml(message)}</p>`).join("");
+        update();
+        pickerEl.dispatchEvent(new Event("change", { bubbles: true }));
+        const dirtyState = pickerEl.closest("form")?.querySelector("[data-form-dirty-state]");
+        if (dirtyState) dirtyState.textContent = "Unsaved changes.";
+        setStatus(messages[0] || "Upload complete.");
+      } catch (error) {
+        if (uploadResults) uploadResults.innerHTML = `<p>Failed: upload - ${escapeHtml(error.message)}</p>`;
+        setStatus(error.message, true);
+      } finally {
+        event.target.value = "";
+      }
     });
     update();
   });
@@ -2316,11 +2385,14 @@ function bindTabEvents(content) {
   const fileForm = content.querySelector("#fileForm");
   if (fileForm) fileForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await api("/api/files/upload", { method: "POST", body: new FormData(fileForm) });
+    const result = await api("/api/files/upload", { method: "POST", body: new FormData(fileForm) });
+    const messages = (result.results || []).map((item) => item.message || `${item.reused ? "Reused existing file" : "Uploaded"}: ${item.file?.originalName || item.originalUploadName || "file"}`);
     markUnpublishedChanges("Media/files");
     await loadData();
     renderAdmin();
-    setStatus("File uploaded.");
+    const uploadResults = document.querySelector("#fileUploadResults");
+    if (uploadResults) uploadResults.innerHTML = messages.map((message) => `<p>${escapeHtml(message)}</p>`).join("");
+    setStatus(messages[0] || "Upload complete.");
   });
 
   content.querySelectorAll("[data-delete-file]").forEach((button) => {

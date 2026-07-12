@@ -1,0 +1,44 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax checks
+        run: |
+          node --check admin/src/config.js
+          node --check admin/src/server.js
+          node --check admin/src/services/publish.js
+          node --check admin/src/services/exportData.js
+          node --check admin/src/public/assets/admin.js
+
+      - name: Build and check
+        run: npm run check
+
+      - name: Public output scan
+        run: npm run scan:public
+
+      - name: Dependency audit
+        run: npm audit --omit=dev
+
+      - name: Docker Compose config
+        run: docker compose config

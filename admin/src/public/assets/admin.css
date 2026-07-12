@@ -641,6 +641,33 @@ button.approve {
   flex: 1 1 220px;
 }
 
+.picker-upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.picker-upload-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.picker-upload-results {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.picker-upload-results p {
+  margin: 0;
+}
+
 .picker-list {
   display: grid;
   gap: 5px;

@@ -74,7 +74,7 @@ If the final static site is deployed under a subpath, set `PUBLIC_SITE_BASE_PATH
 1. Complete first-run setup.
 2. Set store name, logo, theme, support details, and marketplace label.
 3. Create a category.
-4. Upload product images and any downloadable files.
+4. Upload product images inside the product editor, or upload shared media files from Settings -> Media Library.
 5. Create a download object.
 6. Add at least one version and mark it latest.
 7. Create a Software Bundle and link the download.
@@ -83,6 +83,38 @@ If the final static site is deployed under a subpath, set `PUBLIC_SITE_BASE_PATH
 10. Open the generated static preview.
 
 The Page Manager does not write raw HTML pages. It saves structured content, and Astro templates generate consistent public customer-facing support pages. The public site remains branded as the seller/business name only, not as "Page Manager".
+
+### Product states
+
+- Draft: hidden from the customer site preview.
+- Not ready: hidden from the customer site preview and useful for incomplete/review-needed products.
+- Published: visible on the customer site preview after the site is published.
+- Archived: hidden from normal admin lists and hidden from the customer site preview until restored.
+
+## Client-ready deployment checklist
+
+This project is an MVP suitable for a stable client demo, not an enterprise-grade, payment-grade, or fully security-audited platform.
+
+- Use HTTPS before sharing admin access.
+- For local LAN testing use `COOKIE_SECURE=false` and `TRUST_PROXY=false`.
+- For Cloudflare Tunnel or another HTTPS reverse proxy use `COOKIE_SECURE=true` and `TRUST_PROXY=true`.
+- Set real, different `SESSION_SECRET` and `ENCRYPTION_SECRET` values.
+- Keep `ENABLE_SAMPLE_DATA_TOOLS=false` before sharing with clients.
+- Publish before sharing `/preview/`; the preview shows the last successfully published customer site.
+- Share `/preview/` for viewing only.
+- If a client needs admin access, create a temporary limited user and disable/remove it after the demo.
+- For client editing tests, prefer `Editor` or `Publisher`. Do not give `Admin` unless necessary.
+- `File Manager` can upload files, `Publisher` can publish, and `Read Only` can view but not edit.
+- Back up Docker volumes before upgrades. The in-app backup is not a complete Docker volume backup.
+- Upload only trusted files.
+- Do not use real customer data in early demos unless the client approves.
+
+Before sharing generated output, run:
+
+```powershell
+npm run check
+npm run scan:public
+```
 
 ## GitHub Push Workflow
 

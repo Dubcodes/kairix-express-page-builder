@@ -230,10 +230,12 @@ export function migrate() {
   addColumn("download_objects", "archived", "INTEGER NOT NULL DEFAULT 0");
   addColumn("download_objects", "display_group", "TEXT");
   addColumn("download_versions", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("files", "content_hash", "TEXT");
   addColumn("support_packs", "bundle_file_id", "INTEGER");
   addColumn("support_packs", "auto_generate_zip", "INTEGER NOT NULL DEFAULT 1");
   addColumn("support_packs", "archived", "INTEGER NOT NULL DEFAULT 0");
   addColumn("support_packs", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash)").run();
 
   db.prepare("UPDATE products SET publish_state = 'not_ready' WHERE publish_state IN ('ready', 'needs_review')").run();
   db.prepare("UPDATE products SET archived = 1, featured = 0 WHERE publish_state = 'archived'").run();

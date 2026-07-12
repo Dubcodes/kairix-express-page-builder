@@ -36,6 +36,9 @@ import { parseCsv, toCsv } from "./services/csv.js";
 
 const app = express();
 await storageProvider.ensureReady();
+for (const dir of [config.uploadsDir, config.generatedSiteDir, config.generatedSiteBuildDir, config.backupsDir, path.dirname(config.databasePath)]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
 
 if (config.trustProxy) app.set("trust proxy", 1);
 
@@ -177,6 +180,42 @@ function hasPublishedSite() {
   return Boolean(db.prepare("SELECT id FROM publish_events WHERE status = 'success' ORDER BY id DESC LIMIT 1").get());
 }
 
+function previewMessagePage(title, message, status = 200) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${cleanText(title)}</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; color: #17202a; background: #f6f8fb; }
+    main { min-height: 100vh; display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+    section { width: min(560px, 100%); border: 1px solid #d6dde8; background: #fff; padding: 24px; border-radius: 8px; }
+    h1 { margin: 0 0 10px; font-size: 24px; }
+    p { margin: 0; color: #52616f; line-height: 1.55; }
+  </style>
+</head>
+<body><main><section><h1>${cleanText(title)}</h1><p>${cleanText(message)}</p></section></main></body>
+</html>`;
+}
+
+function servePreviewFallback(req, res) {
+  const indexPath = path.join(config.generatedSiteDir, "index.html");
+  if (!fs.existsSync(indexPath)) {
+    return res.status(200).type("html").send(previewMessagePage(
+      "No published customer site yet.",
+      "Return to Page Manager and click Publish."
+    ));
+  }
+  const notFoundPath = path.join(config.generatedSiteDir, "404.html");
+  if (fs.existsSync(notFoundPath)) return res.status(404).sendFile(notFoundPath);
+  return res.status(404).type("html").send(previewMessagePage(
+    "Customer preview page not found.",
+    "This generated customer site page does not exist. Return to Page Manager and check the preview link.",
+    404
+  ));
+}
+
 function makeSlug(name, table, currentId = null) {
   const base = slugify(name || "item", { lower: true, strict: true }) || "item";
   let slug = base;
@@ -210,8 +249,56 @@ function fileRecord(row) {
     url: `/uploads/${row.stored_name}`,
     mimeType: row.mime_type,
     size: row.size,
+    contentHash: row.content_hash || "",
     createdAt: row.created_at
   };
+}
+
+function hashFile(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function removeUploadedTempFile(filePath) {
+  if (isSafeUploadPath(filePath) && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
+}
+
+function saveUploadedFileRecord(file) {
+  const contentHash = hashFile(file.path);
+  const duplicate = db.prepare("SELECT * FROM files WHERE content_hash = ? ORDER BY id").all(contentHash)
+    .find((row) => row.path && fs.existsSync(row.path));
+  if (duplicate) {
+    removeUploadedTempFile(file.path);
+    return {
+      file: fileRecord(duplicate),
+      reused: true,
+      originalUploadName: file.originalname,
+      message: `Reused existing file: ${duplicate.original_name}`
+    };
+  }
+  const result = db.prepare(`
+    INSERT INTO files (original_name, stored_name, path, mime_type, size, content_hash)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(file.originalname, file.filename, file.path, file.mimetype, file.size, contentHash);
+  const saved = db.prepare("SELECT * FROM files WHERE id = ?").get(result.lastInsertRowid);
+  return {
+    file: fileRecord(saved),
+    reused: false,
+    originalUploadName: file.originalname,
+    message: `Uploaded: ${file.originalname}`
+  };
+}
+
+function backfillFileContentHashes(limit = 50) {
+  const rows = db.prepare("SELECT * FROM files WHERE (content_hash IS NULL OR content_hash = '') ORDER BY id LIMIT ?").all(limit);
+  for (const row of rows) {
+    try {
+      if (row.path && fs.existsSync(row.path)) {
+        db.prepare("UPDATE files SET content_hash = ? WHERE id = ?").run(hashFile(row.path), row.id);
+      }
+    } catch (error) {
+      console.warn(`Could not hash uploaded file ${row.id}: ${error.message}`);
+    }
+  }
 }
 
 function normalizeProductPublishState(value, archived = 0) {
@@ -381,12 +468,9 @@ app.post("/api/setup", requireSetupOpen, upload.single("logo"), asyncRoute(async
   setSetting("theme", "clean-light");
   setSetting("defaultMarketplaceLabel", "Buy on AliExpress");
   if (req.file) {
-    const result = db.prepare(`
-      INSERT INTO files (original_name, stored_name, path, mime_type, size)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(req.file.originalname, req.file.filename, req.file.path, req.file.mimetype, req.file.size);
-    setSetting("logo", `/uploads/${req.file.filename}`);
-    setSetting("logoFileId", String(result.lastInsertRowid));
+    const result = saveUploadedFileRecord(req.file);
+    setSetting("logo", result.file.url);
+    setSetting("logoFileId", String(result.file.id));
   }
   res.json({ ok: true });
 }));
@@ -483,12 +567,9 @@ app.put("/api/settings", requirePermission("write"), upload.single("logo"), (req
     if (Object.hasOwn(req.body, field)) setSetting(field, field.includes("Text") ? cleanRich(req.body[field]) : cleanText(req.body[field]));
   }
   if (req.file) {
-    const result = db.prepare(`
-      INSERT INTO files (original_name, stored_name, path, mime_type, size)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(req.file.originalname, req.file.filename, req.file.path, req.file.mimetype, req.file.size);
-    setSetting("logo", `/uploads/${req.file.filename}`);
-    setSetting("logoFileId", String(result.lastInsertRowid));
+    const result = saveUploadedFileRecord(req.file);
+    setSetting("logo", result.file.url);
+    setSetting("logoFileId", String(result.file.id));
   }
   res.json({ ok: true, settings: getSettings() });
 });
@@ -730,14 +811,8 @@ app.post("/api/integrations/aliexpress/detach-product/:id", requirePermission("w
 });
 
 app.post("/api/files/upload", requirePermission("files"), upload.array("files", 12), (req, res) => {
-  const records = (req.files || []).map((file) => {
-    const result = db.prepare(`
-      INSERT INTO files (original_name, stored_name, path, mime_type, size)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(file.originalname, file.filename, file.path, file.mimetype, file.size);
-    return fileRecord(db.prepare("SELECT * FROM files WHERE id = ?").get(result.lastInsertRowid));
-  });
-  res.json({ files: records });
+  const results = (req.files || []).map(saveUploadedFileRecord);
+  res.json({ files: results.map((result) => result.file), results });
 });
 
 function settingContainsFileUrl(value, url) {
@@ -789,6 +864,7 @@ function isSafeUploadPath(filePath) {
 }
 
 app.get("/api/files", requireAuth, (_req, res) => {
+  backfillFileContentHashes();
   const files = db.prepare("SELECT * FROM files ORDER BY created_at DESC").all().map(fileRecord);
   res.json({ files });
 });
@@ -1480,16 +1556,17 @@ function ensureDemoFile(originalName, storedName, mimeType, content) {
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
   if (!fs.existsSync(fullPath)) fs.writeFileSync(fullPath, content);
   const size = fs.statSync(fullPath).size;
+  const contentHash = hashFile(fullPath);
   const existing = db.prepare("SELECT * FROM files WHERE stored_name = ?").get(normalizedStoredName);
   if (existing) {
-    db.prepare("UPDATE files SET original_name = ?, stored_name = ?, path = ?, mime_type = ?, size = ? WHERE id = ?")
-      .run(originalName, normalizedStoredName, fullPath, mimeType, size, existing.id);
+    db.prepare("UPDATE files SET original_name = ?, stored_name = ?, path = ?, mime_type = ?, size = ?, content_hash = ? WHERE id = ?")
+      .run(originalName, normalizedStoredName, fullPath, mimeType, size, contentHash, existing.id);
     return db.prepare("SELECT * FROM files WHERE id = ?").get(existing.id);
   }
   const result = db.prepare(`
-    INSERT INTO files (original_name, stored_name, path, mime_type, size)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(originalName, normalizedStoredName, fullPath, mimeType, size);
+    INSERT INTO files (original_name, stored_name, path, mime_type, size, content_hash)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(originalName, normalizedStoredName, fullPath, mimeType, size, contentHash);
   return db.prepare("SELECT * FROM files WHERE id = ?").get(result.lastInsertRowid);
 }
 
@@ -1801,7 +1878,15 @@ app.use("/uploads", express.static(config.uploadsDir, {
     res.setHeader("X-Content-Type-Options", "nosniff");
   }
 }));
-app.use("/preview", express.static(config.generatedSiteDir));
+const previewStatic = express.static(config.generatedSiteDir, {
+  index: "index.html",
+  fallthrough: true
+});
+app.use("/preview", (req, res, next) => {
+  const indexPath = path.join(config.generatedSiteDir, "index.html");
+  if (!fs.existsSync(indexPath)) return servePreviewFallback(req, res);
+  return previewStatic(req, res, next);
+}, servePreviewFallback);
 app.use(express.static(path.join(config.adminSrcDir, "public")));
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
@@ -1809,7 +1894,8 @@ app.get("*", (req, res) => {
 });
 
 app.use((error, _req, res, _next) => {
-  const status = error.name === "ZodError" ? 400 : 500;
+  const uploadError = error.name === "MulterError" || /^Unsupported file type:/i.test(error.message || "");
+  const status = error.name === "ZodError" || uploadError ? 400 : 500;
   res.status(status).json({
     error: status === 500 ? "Server error" : "Invalid request",
     details: error.name === "ZodError" ? error.errors : error.message

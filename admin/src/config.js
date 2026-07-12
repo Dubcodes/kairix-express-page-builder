@@ -43,9 +43,20 @@ const encryptionSecret = requireProductionSecret(
   "ENCRYPTION_SECRET",
   process.env.ENCRYPTION_SECRET || process.env.SESSION_SECRET || "local-dev-change-me"
 );
+const trustProxy = boolEnv("TRUST_PROXY", false);
+const cookieSecure = boolEnv("COOKIE_SECURE", process.env.NODE_ENV === "production");
+const sampleDataToolsEnabled = boolEnv("ENABLE_SAMPLE_DATA_TOOLS", process.env.NODE_ENV !== "production");
 
 if (process.env.NODE_ENV === "production" && sessionSecret === encryptionSecret) {
   throw new Error("SESSION_SECRET and ENCRYPTION_SECRET must be different long random values in production.");
+}
+
+if (process.env.NODE_ENV === "production" && cookieSecure && !trustProxy) {
+  console.warn("COOKIE_SECURE=true with TRUST_PROXY=false. Behind HTTPS tunnels or reverse proxies, set TRUST_PROXY=true so secure cookies work correctly.");
+}
+
+if (process.env.NODE_ENV === "production" && sampleDataToolsEnabled) {
+  console.warn("ENABLE_SAMPLE_DATA_TOOLS=true in production. Disable it before sharing the Page Manager with clients.");
 }
 
 export const config = {
@@ -64,9 +75,9 @@ export const config = {
   aliexpressAuthUrl: process.env.ALIEXPRESS_AUTH_URL || "",
   aliexpressTokenUrl: process.env.ALIEXPRESS_TOKEN_URL || "",
   aliexpressApiUrl: process.env.ALIEXPRESS_API_URL || "",
-  trustProxy: boolEnv("TRUST_PROXY", false),
-  cookieSecure: boolEnv("COOKIE_SECURE", process.env.NODE_ENV === "production"),
-  sampleDataToolsEnabled: boolEnv("ENABLE_SAMPLE_DATA_TOOLS", process.env.NODE_ENV !== "production"),
+  trustProxy,
+  cookieSecure,
+  sampleDataToolsEnabled,
   sessionSecret,
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB || 25),
   allowedUploadMimeTypes: new Set([

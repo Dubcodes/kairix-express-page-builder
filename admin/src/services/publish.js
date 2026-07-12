@@ -1,5 +1,6 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "fs-extra";
 import slugify from "slugify";
 import JSZip from "jszip";
@@ -45,6 +46,19 @@ function summarizeBuildOutput(output) {
   return parts.join(" - ");
 }
 
+function assertSafeBuildDir() {
+  const buildDir = path.resolve(config.generatedSiteBuildDir);
+  const projectRoot = path.resolve(config.projectRoot);
+  const generatedDir = path.resolve(config.generatedSiteDir);
+  if (buildDir === projectRoot || buildDir === generatedDir || !path.relative(projectRoot, buildDir) || path.relative(projectRoot, buildDir).startsWith("..")) {
+    throw new Error("PUBLIC_BUILD_TEMP_DIR must be a safe temporary directory inside the project and separate from GENERATED_SITE_DIR.");
+  }
+}
+
+async function hashFile(filePath) {
+  return crypto.createHash("sha256").update(await fs.readFile(filePath)).digest("hex");
+}
+
 async function generateSoftwareBundleZips() {
   const bundles = db.prepare("SELECT * FROM support_packs WHERE archived = 0 AND auto_generate_zip = 1 ORDER BY sort_order, name").all();
   const generated = [];
@@ -80,14 +94,15 @@ async function generateSoftwareBundleZips() {
     await fs.ensureDir(path.dirname(outputPath));
     await fs.writeFile(outputPath, await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
     const size = (await fs.stat(outputPath)).size;
+    const contentHash = await hashFile(outputPath);
     const existing = db.prepare("SELECT * FROM files WHERE stored_name = ?").get(storedName);
     const fileId = existing
       ? existing.id
-      : db.prepare("INSERT INTO files (original_name, stored_name, path, mime_type, size) VALUES (?, ?, ?, ?, ?)")
-        .run(`${bundle.name} latest.zip`, storedName, outputPath, "application/zip", size).lastInsertRowid;
+      : db.prepare("INSERT INTO files (original_name, stored_name, path, mime_type, size, content_hash) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(`${bundle.name} latest.zip`, storedName, outputPath, "application/zip", size, contentHash).lastInsertRowid;
     if (existing) {
-      db.prepare("UPDATE files SET original_name = ?, path = ?, mime_type = ?, size = ? WHERE id = ?")
-        .run(`${bundle.name} latest.zip`, outputPath, "application/zip", size, existing.id);
+      db.prepare("UPDATE files SET original_name = ?, path = ?, mime_type = ?, size = ?, content_hash = ? WHERE id = ?")
+        .run(`${bundle.name} latest.zip`, outputPath, "application/zip", size, contentHash, existing.id);
     }
     db.prepare("UPDATE support_packs SET bundle_file_id = ? WHERE id = ?").run(fileId, bundle.id);
     generated.push({ id: bundle.id, name: bundle.name, fileId });
@@ -98,6 +113,7 @@ async function generateSoftwareBundleZips() {
 export async function publishSite(userId = null) {
   const deployProvider = new LocalDeployProvider();
   try {
+    assertSafeBuildDir();
     const generatedBundles = await generateSoftwareBundleZips();
     const data = await buildExportData();
     const dataPath = path.join(config.projectRoot, "site", "src", "data", "content.json");
@@ -105,6 +121,7 @@ export async function publishSite(userId = null) {
     await fs.ensureDir(path.dirname(dataPath));
     await fs.writeJson(dataPath, data, { spaces: 2 });
     await storageProvider.copyToPublic(publicUploadsDir);
+    await fs.ensureDir(config.generatedSiteBuildDir);
     await fs.emptyDir(config.generatedSiteBuildDir);
     const output = await run("npm", ["run", "build", "--workspace", "site"], {
       env: {
