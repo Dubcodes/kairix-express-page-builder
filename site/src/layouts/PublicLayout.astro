@@ -4,6 +4,7 @@ import { assetPath, content, sitePath } from "../lib/content.js";
 const { title, description = content.settings.introText } = Astro.props;
 const s = content.settings;
 const theme = s.theme || "clean-light";
+const favicon = s.logo ? assetPath(s.logo) : "";
 ---
 <!doctype html>
 <html lang="en" data-theme={theme}>
@@ -12,6 +13,8 @@ const theme = s.theme || "clean-light";
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content={description}>
     <title>{title ? `${title} - ${s.brandName}` : s.brandName}</title>
+    {favicon && <link rel="icon" href={favicon}>}
+    {favicon && <link rel="apple-touch-icon" href={favicon}>}
     <style is:global>
       :root {
         --bg: #f7f9fb;
@@ -170,6 +173,13 @@ const theme = s.theme || "clean-light";
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
         gap: 14px;
+      }
+      .product-grid {
+        grid-template-columns: repeat(auto-fill, minmax(240px, 300px));
+        justify-content: start;
+      }
+      .product-grid .product-card-link {
+        width: 100%;
       }
       .card {
         border: 1px solid var(--line-strong);

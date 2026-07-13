@@ -60,6 +60,11 @@ const optionsByType = (product.productOptions || []).reduce((groups, option) => 
           background: var(--surface);
           cursor: pointer;
         }
+        .thumbs button.active,
+        .thumbs button[aria-current="true"] {
+          border-color: var(--accent);
+          box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+        }
         .thumbs img {
           width: 100%;
           height: 100%;
@@ -79,6 +84,10 @@ const optionsByType = (product.productOptions || []).reduce((groups, option) => 
         .product-option-field input {
           width: 100%;
           min-height: 38px;
+        }
+        .option-helper {
+          margin: 0;
+          font-size: 13px;
         }
         .product-lightbox {
           position: fixed;
@@ -117,7 +126,7 @@ const optionsByType = (product.productOptions || []).reduce((groups, option) => 
         {images.length ? <img id="mainImage" class="main-image" src={images[0]} alt={product.name} data-lightbox-src={images[0]}> : <div class="placeholder-media">Product image</div>}
         {images.length > 1 && (
           <div class="thumbs">
-            {images.map((image) => <button type="button" data-thumb={image} aria-label="Show image"><img src={image} alt=""></button>)}
+            {images.map((image, index) => <button class={index === 0 ? "active" : ""} type="button" data-thumb={image} aria-current={index === 0 ? "true" : "false"} aria-label="Show image"><img src={image} alt=""></button>)}
           </div>
         )}
       </div>
@@ -127,16 +136,14 @@ const optionsByType = (product.productOptions || []).reduce((groups, option) => 
         {stock && <p><span class={`pill ${stockClass}`} title="Availability shown by the seller">{stock}</span></p>}
         {Object.keys(optionsByType).length > 0 && (
           <div class="product-options">
+            <p class="muted option-helper">Selections with linked images update the product photo.</p>
             {Object.entries(optionsByType).map(([type, options]) => (
               <label class="product-option-field">
                 <strong>{type}</strong>
-                {options.length > 1 ? (
-                  <select data-product-option>
-                    {options.map((option) => <option value={option.value} data-option-image={option.image ? assetPath(option.image) : ""}>{option.value}</option>)}
-                  </select>
-                ) : (
-                  <input value={options[0].value} data-option-image={options[0].image ? assetPath(options[0].image) : ""} readonly>
-                )}
+                <select data-product-option data-option-type={type}>
+                  <option value="">Not selected</option>
+                  {options.map((option) => <option value={option.value} data-option-image={option.image ? assetPath(option.image) : ""}>{option.value}</option>)}
+                </select>
               </label>
             ))}
           </div>
@@ -212,11 +219,29 @@ const optionsByType = (product.productOptions || []).reduce((groups, option) => 
     var lightboxZoom = 1;
     var lightbox = document.querySelector("#productLightbox");
     var lightboxImg = lightbox && lightbox.querySelector("img");
-    function setMainImage(src) {
+    function updateActiveThumb(src) {
+      document.querySelectorAll("[data-thumb]").forEach(function(button) {
+        var active = button.dataset.thumb === src;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-current", active ? "true" : "false");
+      });
+    }
+    function syncOptionsForImage(src) {
+      document.querySelectorAll("[data-product-option]").forEach(function(select) {
+        var match = "";
+        Array.prototype.forEach.call(select.options, function(option) {
+          if (!match && option.dataset.optionImage && option.dataset.optionImage === src) match = option.value;
+        });
+        select.value = match;
+      });
+    }
+    function setMainImage(src, syncOptions) {
       var main = document.querySelector("#mainImage");
       if (main && src) {
         main.src = src;
         main.dataset.lightboxSrc = src;
+        updateActiveThumb(src);
+        if (syncOptions !== false) syncOptionsForImage(src);
       }
     }
     function openLightbox(src) {
@@ -251,6 +276,8 @@ const optionsByType = (product.productOptions || []).reduce((groups, option) => 
         if (image) setMainImage(image);
       });
     });
+    var initialMainImage = document.querySelector("#mainImage")?.dataset.lightboxSrc || document.querySelector("#mainImage")?.src || "";
+    if (initialMainImage) syncOptionsForImage(initialMainImage);
     document.querySelectorAll("[data-lightbox-src]").forEach(function(item) {
       item.addEventListener("click", function() {
         openLightbox(item.dataset.lightboxSrc || item.src);

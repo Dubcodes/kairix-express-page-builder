@@ -17,7 +17,7 @@ const products = content.products.filter((product) => product.category_id === ca
       <p>{category.description}</p>
     </section>
     <section class="section inner">
-      <div class="grid">
+      <div class="grid product-grid">
         {products.map((product) => <ProductCard product={product} />)}
       </div>
     </section>

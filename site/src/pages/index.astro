@@ -58,7 +58,7 @@ const showTextBlock = s.homeTextBlockEnabled && (s.homeTextBlockHeading || s.hom
     {showProducts && (
       <section class="section inner">
         <h2>{featured.length ? "Featured products" : "Recent products"}</h2>
-        <div class="grid">
+        <div class="grid product-grid">
           {homeProducts.map((product) => <ProductCard product={product} />)}
         </div>
       </section>

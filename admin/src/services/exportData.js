@@ -46,20 +46,20 @@ function safeJsonArray(value) {
   }
 }
 
-function productOptions(product) {
+function productOptions(product, filesById) {
   const structured = safeJsonArray(product.product_options_json)
-    .map((option) => ({
-      type: clean(option.type || "Other"),
-      value: clean(option.value || ""),
-      image: option.image || ""
-    }))
+    .map((option) => {
+      const fileId = option.fileId ? Number(option.fileId) : null;
+      const legacyImage = option.image || "";
+      const resolvedImage = fileId ? fileUrl(filesById.get(fileId)) : legacyImage;
+      return {
+        type: clean(option.type || "Other"),
+        value: clean(option.value || ""),
+        image: resolvedImage || ""
+      };
+    })
     .filter((option) => option.type && option.value);
-  if (structured.length) return structured;
-  return String(product.color_options || "")
-    .split(/[,;\n]/)
-    .map((value) => clean(value.trim()))
-    .filter(Boolean)
-    .map((value) => ({ type: "Color", value, image: "" }));
+  return structured;
 }
 
 function fileUrl(file) {
@@ -221,7 +221,7 @@ export async function buildExportData() {
       gallery,
       descriptionImages,
       setupImages,
-      productOptions: productOptions(product),
+      productOptions: productOptions(product, filesById),
       optionNotes: clean(product.option_notes || ""),
       supportPacks: packs,
       softwareBundles: packs,

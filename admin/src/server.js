@@ -259,14 +259,34 @@ function safeJsonArray(value) {
   }
 }
 
-function cleanProductOptions(options = []) {
+function fileIdForOptionImage(value = "") {
+  if (!value) return null;
+  const numeric = Number(value);
+  if (Number.isInteger(numeric) && numeric > 0) return numeric;
+  const storedName = String(value || "").replace(/^.*\/uploads\//, "");
+  if (!storedName) return null;
+  const file = db.prepare("SELECT id FROM files WHERE stored_name = ?").get(storedName);
+  return file ? Number(file.id) : null;
+}
+
+function cleanProductOptions(options = [], galleryFileIds = []) {
+  const galleryIds = new Set((galleryFileIds || []).map(Number).filter(Boolean));
+  const seen = new Set();
   return (Array.isArray(options) ? options : [])
-    .map((option) => ({
-      type: cleanText(option.type || ""),
-      value: cleanText(option.value || ""),
-      image: cleanText(option.image || "")
-    }))
-    .filter((option) => option.type && option.value);
+    .map((option) => {
+      const type = cleanText(option.type || "");
+      const value = cleanText(option.value || "");
+      const requestedFileId = fileIdForOptionImage(option.fileId || option.image || "");
+      const fileId = requestedFileId && galleryIds.has(Number(requestedFileId)) ? Number(requestedFileId) : null;
+      return { type, value, fileId };
+    })
+    .filter((option) => {
+      if (!option.type || !option.value) return false;
+      const key = `${option.type.toLowerCase()}\u0000${option.value.toLowerCase()}\u0000${option.fileId || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 function safePublishEvent(row) {
@@ -1021,6 +1041,7 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
     productOptions: z.array(z.object({
       type: z.string().optional(),
       value: z.string().optional(),
+      fileId: z.number().nullable().optional(),
       image: z.string().optional()
     })).optional(),
     galleryFileIds: z.array(z.number()).optional(),
@@ -1057,9 +1078,9 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
       body.stockDisplayMode || "friendly",
       body.stockSource || "manual",
       body.sortOrder || 0,
-      cleanText(body.colorOptions),
+      "",
       cleanText(body.optionNotes),
-      JSON.stringify(cleanProductOptions(body.productOptions || []))
+      JSON.stringify(cleanProductOptions(body.productOptions || [], body.galleryFileIds || []))
     );
     saveProductRelations(result.lastInsertRowid, body);
     return result.lastInsertRowid;
@@ -1130,9 +1151,9 @@ app.put("/api/products/:id", requirePermission("write"), (req, res) => {
       ["hidden", "friendly", "exact"].includes(body.stockDisplayMode) ? body.stockDisplayMode : "friendly",
       ["manual", "marketplace", "unknown"].includes(body.stockSource) ? body.stockSource : "manual",
       Number(body.sortOrder || 0),
-      cleanText(body.colorOptions),
+      "",
       cleanText(body.optionNotes),
-      JSON.stringify(cleanProductOptions(body.productOptions || [])),
+      JSON.stringify(cleanProductOptions(body.productOptions || [], body.galleryFileIds || [])),
       id
     );
     saveProductRelations(id, body);

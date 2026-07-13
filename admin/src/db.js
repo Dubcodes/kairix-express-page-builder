@@ -241,6 +241,7 @@ export function migrate() {
   db.prepare("UPDATE products SET publish_state = 'not_ready' WHERE publish_state IN ('ready', 'needs_review')").run();
   db.prepare("UPDATE products SET archived = 1, featured = 0 WHERE publish_state = 'archived'").run();
   db.prepare("UPDATE products SET publish_state = 'archived', featured = 0 WHERE archived = 1").run();
+  migrateProductOptions();
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -373,6 +374,46 @@ export function migrate() {
 function addColumn(table, column, definition) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name);
   if (!columns.includes(column)) db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+}
+
+function safeJsonArray(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function fileIdForUploadUrl(value, filesByStoredName) {
+  const storedName = String(value || "").replace(/^.*\/uploads\//, "");
+  return filesByStoredName.get(storedName) || null;
+}
+
+function migrateProductOptions() {
+  const filesByStoredName = new Map(db.prepare("SELECT id, stored_name FROM files").all().map((file) => [file.stored_name, file.id]));
+  const rows = db.prepare("SELECT id, color_options, product_options_json FROM products").all();
+  const update = db.prepare("UPDATE products SET product_options_json = ? WHERE id = ?");
+  for (const row of rows) {
+    const structured = safeJsonArray(row.product_options_json)
+      .map((option) => ({
+        type: String(option.type || "Color").trim(),
+        value: String(option.value || "").trim(),
+        fileId: option.fileId ? Number(option.fileId) : fileIdForUploadUrl(option.image, filesByStoredName)
+      }))
+      .filter((option) => option.type && option.value);
+    if (structured.length) {
+      if (JSON.stringify(structured) !== row.product_options_json) update.run(JSON.stringify(structured), row.id);
+      continue;
+    }
+    const legacy = String(row.color_options || "")
+      .split(/[,;\n]/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => ({ type: "Color", value, fileId: null }));
+    if (legacy.length) update.run(JSON.stringify(legacy), row.id);
+  }
 }
 
 export function getSettings() {

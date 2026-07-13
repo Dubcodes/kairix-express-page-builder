@@ -171,7 +171,13 @@ function activeProducts() {
 function parseProductOptions(product = {}) {
   try {
     const parsed = JSON.parse(product.product_options_json || "[]");
-    if (Array.isArray(parsed) && parsed.length) return parsed;
+    if (Array.isArray(parsed) && parsed.length) {
+      return parsed.map((option) => ({
+        type: option.type || "Color",
+        value: option.value || "",
+        fileId: option.fileId ? Number(option.fileId) : fileIdForOptionImage(option.image)
+      }));
+    }
   } catch {
     // Fall back to legacy color options below.
   }
@@ -179,34 +185,51 @@ function parseProductOptions(product = {}) {
     .split(/[,;\n]/)
     .map((value) => value.trim())
     .filter(Boolean)
-    .map((value) => ({ type: "Color", value, image: "" }));
+    .map((value) => ({ type: "Color", value, fileId: null }));
+}
+
+function fileById(fileId) {
+  return state.files.find((item) => Number(item.id) === Number(fileId)) || null;
+}
+
+function fileIdForOptionImage(value = "") {
+  if (!value) return null;
+  const numeric = Number(value);
+  if (Number.isInteger(numeric) && numeric > 0) return numeric;
+  const normalized = String(value || "").replace(/^.*\/uploads\//, "/uploads/");
+  const file = state.files.find((item) => String(item.url || "") === normalized);
+  return file ? Number(file.id) : null;
 }
 
 function galleryImageChoices(fileIds = []) {
   return fileIds.map((fileId, index) => {
-    const file = state.files.find((item) => Number(item.id) === Number(fileId));
+    const file = fileById(fileId);
+    const name = file?.originalName || file?.original_name || `File ${fileId}`;
     return {
-      value: file?.url || "",
-      label: file?.originalName || `Gallery image ${index + 1}`
+      value: String(fileId),
+      label: `Gallery image ${index + 1} - ${name}`,
+      url: file?.url || "",
+      name
     };
-  });
+  }).filter((choice) => choice.value);
 }
 
 function productOptionsTable(product = {}, galleryFileIds = []) {
   const rows = parseProductOptions(product);
-  if (!rows.length) rows.push({ type: "Color", value: "", image: "" });
+  if (!rows.length) rows.push({ type: "Color", value: "", fileId: null });
   const choices = galleryImageChoices(galleryFileIds);
   const typeOptions = ["Color", "Size", "Height", "Voltage", "Material", "Connector", "Pack size", "Region", "Other"];
   const renderRow = (row = {}, index = 0) => `
     <div class="option-row" data-product-option-row>
       <label>Option type<input name="productOptionType" list="productOptionTypes" value="${escapeHtml(row.type || "Color")}"></label>
       <label>Option value<input name="productOptionValue" value="${escapeHtml(row.value || "")}" placeholder="Yellow, 12V, Large"></label>
-      <label>Linked gallery image<select name="productOptionImage">
+      <label>Linked gallery image<select name="productOptionFileId">
         <option value="">No linked image</option>
-        ${choices.map((choice, choiceIndex) => `<option value="${escapeHtml(choice.value)}" ${row.image === choice.value ? "selected" : ""}>${escapeHtml(choice.label || `Gallery image ${choiceIndex + 1}`)}</option>`).join("")}
-        ${row.image && !choices.some((choice) => choice.value === row.image) ? `<option value="${escapeHtml(row.image)}" selected>Missing/unlinked image</option>` : ""}
+        ${choices.map((choice) => `<option value="${escapeHtml(choice.value)}" data-image-url="${escapeHtml(choice.url)}" ${Number(row.fileId) === Number(choice.value) ? "selected" : ""}>${escapeHtml(choice.label)}</option>`).join("")}
       </select></label>
+      <div class="option-image-preview" data-product-option-preview aria-hidden="true"></div>
       <button class="secondary" type="button" data-remove-product-option>Remove</button>
+      <p class="field-help option-warning" data-product-option-warning></p>
     </div>
   `;
   return `
@@ -215,7 +238,7 @@ function productOptionsTable(product = {}, galleryFileIds = []) {
       <datalist id="productOptionTypes">${typeOptions.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}</datalist>
       <div class="option-table" data-product-options-list>${rows.map(renderRow).join("")}</div>
       <button class="secondary" type="button" data-add-product-option>Add option</button>
-      <template data-product-option-template>${renderRow({ type: "Color", value: "", image: "" })}</template>
+      <template data-product-option-template>${renderRow({ type: "Color", value: "", fileId: null })}</template>
     </div>
   `;
 }
@@ -553,9 +576,43 @@ function productOptionsFromForm(form) {
     .map((row) => ({
       type: row.querySelector("[name='productOptionType']")?.value.trim() || "",
       value: row.querySelector("[name='productOptionValue']")?.value.trim() || "",
-      image: row.querySelector("[name='productOptionImage']")?.value.trim() || ""
+      fileId: row.querySelector("[name='productOptionFileId']")?.value ? Number(row.querySelector("[name='productOptionFileId']").value) : null
     }))
     .filter((option) => option.type && option.value);
+}
+
+function selectedGalleryFileIds(form) {
+  const pickerEl = form.querySelector("[data-picker='galleryFileIds']");
+  const orderRows = [...(pickerEl?.querySelectorAll("[data-picker-order-row]") || [])]
+    .map((row) => Number(row.dataset.pickerOrderRow))
+    .filter(Boolean);
+  if (orderRows.length) return orderRows;
+  return checkedNumbers(form, "galleryFileIds");
+}
+
+function refreshProductOptionImageChoices(form) {
+  const editor = form.querySelector("[data-product-options-editor]");
+  if (!editor) return;
+  const choices = galleryImageChoices(selectedGalleryFileIds(form));
+  editor.querySelectorAll("[data-product-option-row]").forEach((row) => {
+    const select = row.querySelector("[name='productOptionFileId']");
+    const warning = row.querySelector("[data-product-option-warning]");
+    const preview = row.querySelector("[data-product-option-preview]");
+    if (!select) return;
+    const previous = select.value;
+    select.innerHTML = `<option value="">No linked image</option>${choices.map((choice) => `<option value="${escapeHtml(choice.value)}" data-image-url="${escapeHtml(choice.url)}">${escapeHtml(choice.label)}</option>`).join("")}`;
+    if (previous && choices.some((choice) => String(choice.value) === String(previous))) {
+      select.value = previous;
+      if (warning) warning.textContent = "";
+    } else if (previous) {
+      select.value = "";
+      if (warning) warning.textContent = "Linked image removed from gallery.";
+    } else if (warning) {
+      warning.textContent = "";
+    }
+    const imageUrl = select.selectedOptions[0]?.dataset.imageUrl || "";
+    if (preview) preview.innerHTML = imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="">` : "";
+  });
 }
 
 function escapeHtml(value) {
@@ -602,6 +659,17 @@ function updateAdminTitle(settings = {}) {
   if (adminLogo) {
     adminLogo.src = settings.logo || "";
     adminLogo.classList.toggle("hidden", !settings.logo);
+  }
+  let favicon = document.querySelector("link[rel='icon']");
+  if (settings.logo) {
+    if (!favicon) {
+      favicon = document.createElement("link");
+      favicon.rel = "icon";
+      document.head.append(favicon);
+    }
+    favicon.href = settings.logo;
+  } else if (favicon) {
+    favicon.remove();
   }
   document.title = title;
 }
@@ -1258,7 +1326,6 @@ function productsView() {
           <div class="form-grid">
             <label class="check-row wide"><input name="featured" type="checkbox" ${edit.featured ? "checked" : ""}> Show on homepage as featured product</label>
             <p class="field-help wide">Featured products appear on the homepage only after the product is Published and the site is published.</p>
-            <input type="hidden" name="colorOptions" value="${escapeHtml(edit.color_options || "")}">
             <label class="wide">Option notes<textarea name="optionNotes">${escapeHtml(edit.option_notes || "")}</textarea></label>
             <label class="wide">Short description<textarea name="shortDescription">${escapeHtml(edit.short_description || "")}</textarea></label>
           </div>
@@ -2603,6 +2670,7 @@ function bindTabEvents(content) {
       const list = productForm.querySelector("[data-product-options-list]");
       const template = productForm.querySelector("[data-product-option-template]");
       if (list && template) list.insertAdjacentHTML("beforeend", template.innerHTML);
+      refreshProductOptionImageChoices(productForm);
       if (dirtyState) dirtyState.textContent = "Unsaved changes.";
     });
     productForm.querySelector("[data-product-options-list]")?.addEventListener("click", (event) => {
@@ -2617,6 +2685,14 @@ function bindTabEvents(content) {
     productForm.addEventListener("change", () => {
       if (dirtyState) dirtyState.textContent = "Unsaved changes.";
     });
+    productForm.querySelector("[data-picker='galleryFileIds']")?.addEventListener("change", () => {
+      refreshProductOptionImageChoices(productForm);
+    });
+    productForm.querySelector("[data-product-options-list]")?.addEventListener("change", (event) => {
+      if (!event.target.matches("[name='productOptionFileId']")) return;
+      refreshProductOptionImageChoices(productForm);
+    });
+    refreshProductOptionImageChoices(productForm);
     productForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const values = formValues(productForm);
