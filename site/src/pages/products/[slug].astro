@@ -10,9 +10,17 @@ export function getStaticPaths() {
 
 const { product } = Astro.props;
 const images = (product.gallery?.length ? product.gallery : product.image ? [product.image] : []).map(assetPath);
+const descriptionImages = (product.descriptionImages || []).map(assetPath);
+const setupImages = (product.setupImages || []).map(assetPath);
+const allLightboxImages = [...images, ...descriptionImages, ...setupImages];
 const stock = stockLabel(product);
 const stockClass = stock.includes("Out") ? "pill-danger" : stock.includes("Almost") ? "pill-almost-out" : stock.includes("Low") ? "pill-low-stock" : "pill-success";
 const bundles = product.softwareBundles || product.supportPacks || [];
+const optionsByType = (product.productOptions || []).reduce((groups, option) => {
+  if (!groups[option.type]) groups[option.type] = [];
+  groups[option.type].push(option);
+  return groups;
+}, {});
 ---
 <PublicLayout title={product.name} description={product.short_description}>
   <main data-product={product.id}>
@@ -35,6 +43,7 @@ const bundles = product.softwareBundles || product.supportPacks || [];
           background: var(--surface);
           border: 1px solid var(--line);
           border-radius: 8px;
+          cursor: zoom-in;
         }
         .thumbs {
           display: flex;
@@ -54,15 +63,58 @@ const bundles = product.softwareBundles || product.supportPacks || [];
         .thumbs img {
           width: 100%;
           height: 100%;
-          object-fit: cover;
+          object-fit: contain;
           border-radius: 5px;
+        }
+        .product-options {
+          display: grid;
+          gap: 10px;
+          margin: 14px 0;
+        }
+        .product-option-field {
+          display: grid;
+          gap: 4px;
+        }
+        .product-option-field select,
+        .product-option-field input {
+          width: 100%;
+          min-height: 38px;
+        }
+        .product-lightbox {
+          position: fixed;
+          inset: 0;
+          z-index: 50;
+          display: none;
+          place-items: center;
+          padding: 18px;
+          background: rgba(15, 23, 42, 0.86);
+        }
+        .product-lightbox.open {
+          display: grid;
+        }
+        .product-lightbox img {
+          max-width: 92vw;
+          max-height: 78vh;
+          object-fit: contain;
+          transform: scale(var(--zoom, 1));
+          transition: transform 120ms ease;
+        }
+        .lightbox-actions {
+          position: fixed;
+          left: 18px;
+          right: 18px;
+          bottom: 18px;
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 8px;
         }
         @media (max-width: 860px) {
           .product-detail { grid-template-columns: 1fr; }
         }
       </style>
       <div>
-        {images.length ? <img id="mainImage" class="main-image" src={images[0]} alt={product.name}> : <div class="placeholder-media">Product image</div>}
+        {images.length ? <img id="mainImage" class="main-image" src={images[0]} alt={product.name} data-lightbox-src={images[0]}> : <div class="placeholder-media">Product image</div>}
         {images.length > 1 && (
           <div class="thumbs">
             {images.map((image) => <button type="button" data-thumb={image} aria-label="Show image"><img src={image} alt=""></button>)}
@@ -73,6 +125,23 @@ const bundles = product.softwareBundles || product.supportPacks || [];
         {product.sku && <p><strong>SKU:</strong> {product.sku}</p>}
         {product.version_label && <p><strong>Version:</strong> {product.version_label}</p>}
         {stock && <p><span class={`pill ${stockClass}`} title="Availability shown by the seller">{stock}</span></p>}
+        {Object.keys(optionsByType).length > 0 && (
+          <div class="product-options">
+            {Object.entries(optionsByType).map(([type, options]) => (
+              <label class="product-option-field">
+                <strong>{type}</strong>
+                {options.length > 1 ? (
+                  <select data-product-option>
+                    {options.map((option) => <option value={option.value} data-option-image={option.image ? assetPath(option.image) : ""}>{option.value}</option>)}
+                  </select>
+                ) : (
+                  <input value={options[0].value} data-option-image={options[0].image ? assetPath(options[0].image) : ""} readonly>
+                )}
+              </label>
+            ))}
+          </div>
+        )}
+        {product.optionNotes && <p class="muted"><strong>Option notes:</strong> {product.optionNotes}</p>}
         <div class="button-row">
           {product.marketplace_url && <a class="button" href={product.marketplace_url} data-track-marketplace={product.id}>{content.settings.defaultMarketplaceLabel}</a>}
           {product.marketplace_qr && <button class="button secondary" type="button" data-qr="marketplace" title="Show marketplace QR code" aria-label="Show marketplace QR code">QR</button>}
@@ -82,9 +151,9 @@ const bundles = product.softwareBundles || product.supportPacks || [];
     </section>
     <section class="section inner">
       <div set:html={product.long_description}></div>
-      {product.descriptionImages?.map((image) => <img src={assetPath(image)} alt="" style="width: 100%; margin: 18px 0; border-radius: 8px;">)}
-      {product.setupImages?.length > 0 && <h2>Setup screenshots</h2>}
-      <div class="grid">{product.setupImages?.map((image) => <img src={assetPath(image)} alt="" style="border-radius: 8px;">)}</div>
+      {descriptionImages.map((image) => <img src={image} alt="" data-lightbox-src={image} style="width: 100%; margin: 18px 0; border-radius: 8px; cursor: zoom-in;">)}
+      {setupImages.length > 0 && <h2>Setup screenshots</h2>}
+      <div class="grid">{setupImages.map((image) => <img src={image} alt="" data-lightbox-src={image} style="border-radius: 8px; cursor: zoom-in;">)}</div>
     </section>
     <section class="section inner" id="downloads">
       <h2>Software Bundles and downloads</h2>
@@ -125,12 +194,87 @@ const bundles = product.softwareBundles || product.supportPacks || [];
       </div>
     </div>
   )}
+  <div class="product-lightbox" id="productLightbox" aria-hidden="true">
+    <img alt="">
+    <div class="lightbox-actions">
+      <button class="button secondary" type="button" data-lightbox-prev>Previous</button>
+      <button class="button secondary" type="button" data-lightbox-zoom-in>Zoom in</button>
+      <button class="button secondary" type="button" data-lightbox-zoom-out>Zoom out</button>
+      <button class="button secondary" type="button" data-lightbox-reset>Reset</button>
+      <button class="button" type="button" data-lightbox-next>Next</button>
+      <button class="button secondary" type="button" data-lightbox-close>Close</button>
+    </div>
+  </div>
   <script is:inline set:html={trackScript("product_view", { productId: product.id })} />
-  <script is:inline>
+  <script is:inline define:vars={{ allLightboxImages }}>
+    var lightboxImages = allLightboxImages;
+    var lightboxIndex = 0;
+    var lightboxZoom = 1;
+    var lightbox = document.querySelector("#productLightbox");
+    var lightboxImg = lightbox && lightbox.querySelector("img");
+    function setMainImage(src) {
+      var main = document.querySelector("#mainImage");
+      if (main && src) {
+        main.src = src;
+        main.dataset.lightboxSrc = src;
+      }
+    }
+    function openLightbox(src) {
+      if (!lightbox || !lightboxImg || !src) return;
+      lightboxIndex = Math.max(0, lightboxImages.indexOf(src));
+      lightboxZoom = 1;
+      lightboxImg.src = src;
+      lightboxImg.style.setProperty("--zoom", lightboxZoom);
+      lightbox.classList.add("open");
+      lightbox.setAttribute("aria-hidden", "false");
+    }
+    function closeLightbox() {
+      if (!lightbox) return;
+      lightbox.classList.remove("open");
+      lightbox.setAttribute("aria-hidden", "true");
+    }
+    function moveLightbox(delta) {
+      if (!lightboxImages.length || !lightboxImg) return;
+      lightboxIndex = (lightboxIndex + delta + lightboxImages.length) % lightboxImages.length;
+      lightboxZoom = 1;
+      lightboxImg.src = lightboxImages[lightboxIndex];
+      lightboxImg.style.setProperty("--zoom", lightboxZoom);
+    }
     document.querySelectorAll("[data-thumb]").forEach(function(button) {
       button.addEventListener("click", function() {
-        document.querySelector("#mainImage").src = button.dataset.thumb;
+        setMainImage(button.dataset.thumb);
       });
+    });
+    document.querySelectorAll("[data-product-option]").forEach(function(select) {
+      select.addEventListener("change", function() {
+        var image = select.selectedOptions[0] && select.selectedOptions[0].dataset.optionImage;
+        if (image) setMainImage(image);
+      });
+    });
+    document.querySelectorAll("[data-lightbox-src]").forEach(function(item) {
+      item.addEventListener("click", function() {
+        openLightbox(item.dataset.lightboxSrc || item.src);
+      });
+    });
+    lightbox?.addEventListener("click", function(event) {
+      if (event.target === lightbox || event.target.matches("[data-lightbox-close]")) closeLightbox();
+      if (event.target.matches("[data-lightbox-prev]")) moveLightbox(-1);
+      if (event.target.matches("[data-lightbox-next]")) moveLightbox(1);
+      if (event.target.matches("[data-lightbox-zoom-in]")) {
+        lightboxZoom = Math.min(3, lightboxZoom + 0.25);
+        lightboxImg.style.setProperty("--zoom", lightboxZoom);
+      }
+      if (event.target.matches("[data-lightbox-zoom-out]")) {
+        lightboxZoom = Math.max(0.5, lightboxZoom - 0.25);
+        lightboxImg.style.setProperty("--zoom", lightboxZoom);
+      }
+      if (event.target.matches("[data-lightbox-reset]")) {
+        lightboxZoom = 1;
+        lightboxImg.style.setProperty("--zoom", lightboxZoom);
+      }
+    });
+    document.addEventListener("keydown", function(event) {
+      if (event.key === "Escape") closeLightbox();
     });
     document.querySelectorAll("[data-qr]").forEach(function(button) {
       button.addEventListener("click", function() {

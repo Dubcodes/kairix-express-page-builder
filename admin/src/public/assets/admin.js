@@ -168,6 +168,58 @@ function activeProducts() {
   return state.products.filter((product) => !isArchivedProduct(product));
 }
 
+function parseProductOptions(product = {}) {
+  try {
+    const parsed = JSON.parse(product.product_options_json || "[]");
+    if (Array.isArray(parsed) && parsed.length) return parsed;
+  } catch {
+    // Fall back to legacy color options below.
+  }
+  return String(product.color_options || "")
+    .split(/[,;\n]/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => ({ type: "Color", value, image: "" }));
+}
+
+function galleryImageChoices(fileIds = []) {
+  return fileIds.map((fileId, index) => {
+    const file = state.files.find((item) => Number(item.id) === Number(fileId));
+    return {
+      value: file?.url || "",
+      label: file?.originalName || `Gallery image ${index + 1}`
+    };
+  });
+}
+
+function productOptionsTable(product = {}, galleryFileIds = []) {
+  const rows = parseProductOptions(product);
+  if (!rows.length) rows.push({ type: "Color", value: "", image: "" });
+  const choices = galleryImageChoices(galleryFileIds);
+  const typeOptions = ["Color", "Size", "Height", "Voltage", "Material", "Connector", "Pack size", "Region", "Other"];
+  const renderRow = (row = {}, index = 0) => `
+    <div class="option-row" data-product-option-row>
+      <label>Option type<input name="productOptionType" list="productOptionTypes" value="${escapeHtml(row.type || "Color")}"></label>
+      <label>Option value<input name="productOptionValue" value="${escapeHtml(row.value || "")}" placeholder="Yellow, 12V, Large"></label>
+      <label>Linked gallery image<select name="productOptionImage">
+        <option value="">No linked image</option>
+        ${choices.map((choice, choiceIndex) => `<option value="${escapeHtml(choice.value)}" ${row.image === choice.value ? "selected" : ""}>${escapeHtml(choice.label || `Gallery image ${choiceIndex + 1}`)}</option>`).join("")}
+        ${row.image && !choices.some((choice) => choice.value === row.image) ? `<option value="${escapeHtml(row.image)}" selected>Missing/unlinked image</option>` : ""}
+      </select></label>
+      <button class="secondary" type="button" data-remove-product-option>Remove</button>
+    </div>
+  `;
+  return `
+    <div class="product-options-editor" data-product-options-editor>
+      <p class="field-help">Use this for simple customer-facing choices such as colour, size, voltage, height, connector type, or material. These options do not change price or stock.</p>
+      <datalist id="productOptionTypes">${typeOptions.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("")}</datalist>
+      <div class="option-table" data-product-options-list>${rows.map(renderRow).join("")}</div>
+      <button class="secondary" type="button" data-add-product-option>Add option</button>
+      <template data-product-option-template>${renderRow({ type: "Color", value: "", image: "" })}</template>
+    </div>
+  `;
+}
+
 function fileIdForUrl(url = "") {
   const file = state.files.find((item) => String(item.url || "") === String(url || ""));
   return file ? [file.id] : [];
@@ -494,6 +546,16 @@ function formValues(form) {
 
 function checkedNumbers(form, name) {
   return [...form.querySelectorAll(`input[name="${name}"]:checked`)].map((input) => Number(input.value));
+}
+
+function productOptionsFromForm(form) {
+  return [...form.querySelectorAll("[data-product-option-row]")]
+    .map((row) => ({
+      type: row.querySelector("[name='productOptionType']")?.value.trim() || "",
+      value: row.querySelector("[name='productOptionValue']")?.value.trim() || "",
+      image: row.querySelector("[name='productOptionImage']")?.value.trim() || ""
+    }))
+    .filter((option) => option.type && option.value);
 }
 
 function escapeHtml(value) {
@@ -909,7 +971,7 @@ function supportSettingsView() {
       </form>
       <div class="item contact-methods-panel">
         <h3>Public contact rows</h3>
-        <p class="muted">Add the seller-facing support options that should appear on the public support portal.</p>
+        <p class="muted">Add seller-facing support options for the public support portal, such as WhatsApp links, phone numbers, marketplace support pages, email, or setup help links.</p>
         <form id="contactMethodForm" class="form-grid contact-method-form">
           <label>Label<input name="label" placeholder="WhatsApp support" required></label>
           <label>Type<select name="type"><option value="link">Link</option><option value="email">Email</option><option value="phone">Phone</option><option value="marketplace">Marketplace</option></select></label>
@@ -959,6 +1021,7 @@ function advancedSettingsView() {
       <h2>Advanced Settings</h2>
       <p class="muted">Deployment and provider settings for Portainer, local preview, and future Cloudflare support.</p>
       <div class="list">
+        <div class="item" id="diagnosticsCard"><h3>App/server diagnostics</h3><p class="muted">Load safe version and runtime information for support. Secrets are not included.</p><div class="actions"><button id="loadDiagnosticsBtn" class="secondary" type="button">Load diagnostics</button><button id="copyDiagnosticsBtn" type="button">Copy diagnostics</button></div><pre id="diagnosticsOutput" class="build-log"></pre></div>
         <div class="item"><h3>Public site base path</h3><p><code>PUBLIC_SITE_BASE_PATH</code> is currently configured by environment. Local admin preview uses <code>/preview</code>; Cloudflare root deploys should use an empty value.</p></div>
         <div class="item"><h3>Storage provider</h3><p>Local uploads are active. Cloudflare R2 is a placeholder for a later beta.</p></div>
         <div class="item"><h3>Deploy provider</h3><p>Local static generation is active. Cloudflare Pages Direct Upload is scaffolded for a future release.</p></div>
@@ -1195,7 +1258,7 @@ function productsView() {
           <div class="form-grid">
             <label class="check-row wide"><input name="featured" type="checkbox" ${edit.featured ? "checked" : ""}> Show on homepage as featured product</label>
             <p class="field-help wide">Featured products appear on the homepage only after the product is Published and the site is published.</p>
-            <label>Color options<input name="colorOptions" value="${escapeHtml(edit.color_options || "")}"></label>
+            <input type="hidden" name="colorOptions" value="${escapeHtml(edit.color_options || "")}">
             <label class="wide">Option notes<textarea name="optionNotes">${escapeHtml(edit.option_notes || "")}</textarea></label>
             <label class="wide">Short description<textarea name="shortDescription">${escapeHtml(edit.short_description || "")}</textarea></label>
           </div>
@@ -1219,6 +1282,10 @@ function productsView() {
           <div><strong>Product gallery images</strong>${picker("galleryFileIds", imageFiles(), editFileIds("gallery"), "images", { upload: true, uploadImageOnly: true })}</div>
           <div><strong>Description images</strong>${picker("descriptionFileIds", imageFiles(), editFileIds("description"), "images", { upload: true, uploadImageOnly: true })}</div>
           <div><strong>App/setup screenshots</strong>${picker("setupFileIds", imageFiles(), editFileIds("setup"), "images", { upload: true, uploadImageOnly: true })}</div>
+        </fieldset>
+        <fieldset class="wide form-section">
+          <legend>Product options</legend>
+          ${productOptionsTable(edit, editFileIds("gallery"))}
         </fieldset>
         <fieldset class="wide form-section">
           <legend>Description</legend>
@@ -1260,6 +1327,7 @@ function publishView() {
       ${hasPublishedSite() ? "" : `<p class="muted">No published site yet. Click Publish first.</p>`}
       ${unpublishedNote}
       <div id="publishOutput" class="publish-output" aria-live="polite"></div>
+      <div class="list" id="publishEvents"></div>
     </section>
   `;
 }
@@ -1550,13 +1618,29 @@ function stripAnsi(value) {
 }
 
 function parseBuildSummary(value) {
-  const clean = stripAnsi(value);
+  const event = parsePublishEventMessage(value);
+  const clean = stripAnsi(event.rawLog || event.summary || value);
   const pagesMatch = clean.match(/(\d+)\s+page\(s\)\s+built(?:\s+in\s+([0-9.]+(?:ms|s)))?/i);
   const durationMatch = clean.match(/\bCompleted in\s+([0-9.]+(?:ms|s))/i);
+  const routes = [...clean.matchAll(/├─\s+([^\s]+)|└─\s+([^\s]+)/g)].map((match) => match[1] || match[2]).filter(Boolean);
   return {
+    summary: event.summary || "",
     pages: pagesMatch?.[1] || "",
-    duration: pagesMatch?.[2] || durationMatch?.[1] || ""
+    duration: pagesMatch?.[2] || durationMatch?.[1] || "",
+    routes,
+    sitemap: /sitemap.*created/i.test(clean),
+    rawLog: event.rawLog || (looksLikeBuildLog(value) ? clean : "")
   };
+}
+
+function parsePublishEventMessage(value) {
+  try {
+    const parsed = JSON.parse(value || "{}");
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {
+    // Existing events are plain text.
+  }
+  return { summary: String(value || ""), rawLog: "" };
 }
 
 function looksLikeBuildLog(value) {
@@ -1565,13 +1649,27 @@ function looksLikeBuildLog(value) {
 }
 
 function buildLogDetails(value) {
-  const clean = stripAnsi(value).trim();
-  if (!clean || !looksLikeBuildLog(clean)) return "";
+  const summary = parseBuildSummary(value);
+  const clean = stripAnsi(summary.rawLog || "").trim();
+  if (!clean) return "";
   return `
     <details class="log-details">
-      <summary>View build log</summary>
+      <summary>Advanced raw build log</summary>
       <pre class="build-log">${escapeHtml(clean)}</pre>
     </details>
+  `;
+}
+
+function buildSummaryCard(value, status = "success") {
+  const summary = parseBuildSummary(value);
+  return `
+    <div class="build-summary">
+      <p><strong>Build summary</strong></p>
+      <p>${pill(status === "success" ? "Success" : "Failed", status === "success" ? "success" : "danger")} ${summary.pages ? `${escapeHtml(summary.pages)} page(s) built` : ""}${summary.pages && summary.duration ? " · " : ""}${summary.duration ? `Duration ${escapeHtml(summary.duration)}` : ""}</p>
+      ${summary.routes?.length ? `<p class="muted">Generated pages:</p><ul class="compact-list">${summary.routes.map((route) => `<li>${escapeHtml(route === "/" ? "Home" : route)}</li>`).join("")}</ul>` : ""}
+      ${summary.sitemap ? `<p class="muted">Sitemap created: yes</p>` : ""}
+      ${buildLogDetails(value)}
+    </div>
   `;
 }
 
@@ -1602,7 +1700,8 @@ function openImagePreview(url, title) {
 }
 
 function cleanPublishMessage(event) {
-  const raw = stripAnsi(event.message || "").trim();
+  const parsed = parsePublishEventMessage(event.message || "");
+  const raw = stripAnsi(parsed.summary || event.message || "").trim();
   if (looksLikeBuildLog(raw)) return event.status === "success" ? "Static site published" : "Publish failed";
   return raw || (event.status === "success" ? "Static site published" : "Publish event recorded");
 }
@@ -1703,7 +1802,6 @@ async function renderPublishReview() {
   };
   const warnings = review.warnings || [];
   const visibilityMessages = review.visibilityMessages || [];
-  const events = review.recentPublishEvents || [];
   const visibility = review.counts?.productVisibility || {};
   target.innerHTML = `
     ${publishStateCard()}
@@ -1735,6 +1833,10 @@ async function renderPublishReview() {
         </button>
       `).join("")}</div>` : "<p class='muted'>No blocking warnings found.</p>"}
     </div>
+  `;
+  const eventsTarget = document.querySelector("#publishEvents");
+  const events = review.recentPublishEvents || [];
+  if (eventsTarget) eventsTarget.innerHTML = `
     <div class="item">
       <h3>Last publish events</h3>
       ${events.map((event) => {
@@ -1743,7 +1845,7 @@ async function renderPublishReview() {
           <div class="publish-event publish-event-${escapeHtml(semanticType(event.status))}">
             <p>${pill(event.status)} <span class="muted">${escapeHtml(event.created_at)}</span> ${escapeHtml(cleanPublishMessage(event))}</p>
             ${summary.pages || summary.duration ? `<p class="muted">${summary.pages ? `${escapeHtml(summary.pages)} page(s) built` : ""}${summary.pages && summary.duration ? " · " : ""}${summary.duration ? `Duration ${escapeHtml(summary.duration)}` : ""}</p>` : ""}
-            ${buildLogDetails(event.message || "")}
+            <details><summary>View details</summary>${buildSummaryCard(event.message || "", event.status)}</details>
           </div>
         `;
       }).join("") || "<p class='muted'>No publish events yet.</p>"}
@@ -1772,11 +1874,9 @@ function bindTabEvents(content) {
       output.innerHTML = `<p class="muted">Publishing...</p>`;
       try {
         const result = await api("/api/publish", { method: "POST", body: {} });
-        const summary = parseBuildSummary(result.output || "");
         output.innerHTML = `
           <p class="publish-success">Published successfully.</p>
-          ${summary.pages || summary.duration ? `<p class="muted">${summary.pages ? `${escapeHtml(summary.pages)} page(s) built` : ""}${summary.pages && summary.duration ? " · " : ""}${summary.duration ? `Duration ${escapeHtml(summary.duration)}` : ""}</p>` : ""}
-          ${buildLogDetails(result.output || result.message || "")}
+          ${buildSummaryCard(JSON.stringify({ summary: "Static site published", rawLog: result.output || result.message || "" }), "success")}
         `;
         clearUnpublishedChanges();
         state.me = { ...(state.me || {}), hasPublishedSite: true };
@@ -1817,6 +1917,22 @@ function bindTabEvents(content) {
           <p class="muted">${escapeHtml(event.created_at)} ${event.entity_type ? `- ${escapeHtml(event.entity_type)} #${escapeHtml(event.entity_id || "")}` : ""}</p>
         </div>
       `).join("") || "<p class='muted'>No audit events yet.</p>";
+    },
+    loadDiagnosticsBtn: async () => {
+      const diagnostics = await api("/api/diagnostics");
+      document.querySelector("#diagnosticsOutput").textContent = JSON.stringify(diagnostics, null, 2);
+      setStatus("Diagnostics loaded.");
+    },
+    copyDiagnosticsBtn: async () => {
+      const diagnostics = await api("/api/diagnostics");
+      const text = JSON.stringify(diagnostics, null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+        setStatus("Diagnostics copied.");
+      } catch {
+        document.querySelector("#diagnosticsOutput").textContent = text;
+        setStatus("Clipboard unavailable. Diagnostics shown for manual copy.", true);
+      }
     }
   };
   for (const [id, handler] of Object.entries(handlers)) {
@@ -2483,6 +2599,18 @@ function bindTabEvents(content) {
     categoryNameInput?.addEventListener("input", updateCategoryHint);
     categoryNameInput?.addEventListener("change", updateCategoryHint);
     updateCategoryHint();
+    productForm.querySelector("[data-add-product-option]")?.addEventListener("click", () => {
+      const list = productForm.querySelector("[data-product-options-list]");
+      const template = productForm.querySelector("[data-product-option-template]");
+      if (list && template) list.insertAdjacentHTML("beforeend", template.innerHTML);
+      if (dirtyState) dirtyState.textContent = "Unsaved changes.";
+    });
+    productForm.querySelector("[data-product-options-list]")?.addEventListener("click", (event) => {
+      const remove = event.target.closest("[data-remove-product-option]");
+      if (!remove) return;
+      remove.closest("[data-product-option-row]")?.remove();
+      if (dirtyState) dirtyState.textContent = "Unsaved changes.";
+    });
     productForm.addEventListener("input", () => {
       if (dirtyState) dirtyState.textContent = "Unsaved changes.";
     });
@@ -2516,6 +2644,7 @@ function bindTabEvents(content) {
     values.setupFileIds = checkedNumbers(productForm, "setupFileIds");
     values.supportPackIds = checkedNumbers(productForm, "supportPackIds");
     values.relatedProductIds = checkedNumbers(productForm, "relatedProductIds");
+    values.productOptions = productOptionsFromForm(productForm);
     values.longDescriptionMode = productForm.querySelector("[name='longDescriptionSource']")?.checked ? "html" : "plain";
     const path = state.editingProductId ? `/api/products/${state.editingProductId}` : "/api/products";
     await api(path, { method: state.editingProductId ? "PUT" : "POST", body: values });

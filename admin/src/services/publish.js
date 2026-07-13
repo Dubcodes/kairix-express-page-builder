@@ -46,6 +46,15 @@ function summarizeBuildOutput(output) {
   return parts.join(" - ");
 }
 
+function appVersion() {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(config.projectRoot, "package.json"), "utf8"));
+    return packageJson.version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 function assertSafeBuildDir() {
   const buildDir = path.resolve(config.generatedSiteBuildDir);
   const projectRoot = path.resolve(config.projectRoot);
@@ -132,10 +141,10 @@ export async function publishSite(userId = null) {
     await fs.emptyDir(config.generatedSiteDir);
     await fs.copy(config.generatedSiteBuildDir, config.generatedSiteDir);
     const result = await deployProvider.deploy();
-    db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("success", summarizeBuildOutput(output), userId);
+    db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("success", JSON.stringify({ summary: summarizeBuildOutput(output), rawLog: output, appVersion: appVersion() }), userId);
     return { ok: true, ...result, output, generatedBundles };
   } catch (error) {
-    db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("failure", String(error.message || error).slice(0, 4000), userId);
+    db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("failure", JSON.stringify({ summary: "Publish failed", rawLog: String(error.message || error), appVersion: appVersion() }), userId);
     throw error;
   }
 }

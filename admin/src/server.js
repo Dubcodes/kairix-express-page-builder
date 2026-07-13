@@ -42,6 +42,15 @@ for (const dir of [config.uploadsDir, config.generatedSiteDir, config.generatedS
 
 if (config.trustProxy) app.set("trust proxy", 1);
 
+function appVersion() {
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(config.projectRoot, "package.json"), "utf8"));
+    return packageJson.version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false
@@ -237,6 +246,39 @@ function jsonSetting(value) {
   } catch {
     return [];
   }
+}
+
+function safeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function cleanProductOptions(options = []) {
+  return (Array.isArray(options) ? options : [])
+    .map((option) => ({
+      type: cleanText(option.type || ""),
+      value: cleanText(option.value || ""),
+      image: cleanText(option.image || "")
+    }))
+    .filter((option) => option.type && option.value);
+}
+
+function safePublishEvent(row) {
+  if (!row) return null;
+  let summary = row.message || "";
+  try {
+    const parsed = JSON.parse(row.message || "{}");
+    summary = parsed.summary || summary;
+  } catch {
+    // Existing rows may be plain text.
+  }
+  return { status: row.status, created_at: row.created_at, message: cleanText(summary).slice(0, 300) };
 }
 
 function fileRecord(row) {
@@ -536,6 +578,33 @@ app.get("/api/me", (req, res) => {
 
 app.get("/api/settings", requireAuth, (req, res) => {
   res.json(getSettings());
+});
+
+app.get("/api/diagnostics", requireAdmin, (_req, res) => {
+  const latestPublish = db.prepare("SELECT status, message, created_at FROM publish_events ORDER BY created_at DESC LIMIT 1").get() || null;
+  const lastSuccess = db.prepare("SELECT created_at FROM publish_events WHERE status = 'success' ORDER BY created_at DESC LIMIT 1").get() || null;
+  res.json({
+    appVersion: appVersion(),
+    nodeEnv: process.env.NODE_ENV || "development",
+    nodeVersion: process.version,
+    platform: process.platform,
+    publicBaseUrl: config.publicBaseUrl,
+    publicSiteBasePath: config.publicSiteBasePath,
+    adminBaseUrl: config.adminBaseUrl,
+    cookieSecure: config.cookieSecure,
+    trustProxy: config.trustProxy,
+    sampleDataToolsEnabled: config.sampleDataToolsEnabled,
+    maxUploadMb: config.maxUploadMb,
+    hasPublishedSite: hasPublishedSite(),
+    lastSuccessfulPublishAt: lastSuccess?.created_at || null,
+    latestPublish: safePublishEvent(latestPublish),
+    counts: {
+      products: db.prepare("SELECT COUNT(*) AS count FROM products").get().count,
+      downloads: db.prepare("SELECT COUNT(*) AS count FROM download_objects").get().count,
+      files: db.prepare("SELECT COUNT(*) AS count FROM files").get().count,
+      users: db.prepare("SELECT COUNT(*) AS count FROM users").get().count
+    }
+  });
 });
 
 app.put("/api/settings", requirePermission("write"), upload.single("logo"), (req, res) => {
@@ -949,6 +1018,11 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
     sortOrder: z.number().optional(),
     colorOptions: z.string().optional(),
     optionNotes: z.string().optional(),
+    productOptions: z.array(z.object({
+      type: z.string().optional(),
+      value: z.string().optional(),
+      image: z.string().optional()
+    })).optional(),
     galleryFileIds: z.array(z.number()).optional(),
     descriptionFileIds: z.array(z.number()).optional(),
     setupFileIds: z.array(z.number()).optional(),
@@ -962,8 +1036,8 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
     const result = db.prepare(`
       INSERT INTO products
       (name, slug, sku, version_label, category_id, marketplace_url, short_description, long_description, status, featured, archived,
-       publish_state, stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order, color_options, option_notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       publish_state, stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order, color_options, option_notes, product_options_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       cleanText(body.name),
       slug,
@@ -984,7 +1058,8 @@ app.post("/api/products", requirePermission("write"), (req, res) => {
       body.stockSource || "manual",
       body.sortOrder || 0,
       cleanText(body.colorOptions),
-      cleanText(body.optionNotes)
+      cleanText(body.optionNotes),
+      JSON.stringify(cleanProductOptions(body.productOptions || []))
     );
     saveProductRelations(result.lastInsertRowid, body);
     return result.lastInsertRowid;
@@ -1003,9 +1078,9 @@ app.post("/api/products/:id/duplicate", requirePermission("write"), (req, res) =
     const result = db.prepare(`
       INSERT INTO products
       (name, slug, sku, version_label, category_id, marketplace_url, short_description, long_description, status, featured, archived,
-       publish_state, stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order, color_options, option_notes)
+       publish_state, stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order, color_options, option_notes, product_options_json)
       SELECT ?, ?, sku, version_label, category_id, marketplace_url, short_description, long_description, 'draft', 0,
-       0, 'draft', stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order + 1, color_options, option_notes
+       0, 'draft', stock_tracking, stock_count, stock_low_threshold, stock_display_mode, stock_source, sort_order + 1, color_options, option_notes, product_options_json
       FROM products WHERE id = ?
     `).run(name, slug, current.id);
     const newId = result.lastInsertRowid;
@@ -1034,7 +1109,7 @@ app.put("/api/products/:id", requirePermission("write"), (req, res) => {
         name = ?, slug = ?, sku = ?, version_label = ?, category_id = ?, marketplace_url = ?,
         short_description = ?, long_description = ?, status = ?, featured = ?, archived = ?, publish_state = ?,
         stock_tracking = ?, stock_count = ?, stock_low_threshold = ?, stock_display_mode = ?, stock_source = ?,
-        sort_order = ?, color_options = ?, option_notes = ?, updated_at = CURRENT_TIMESTAMP
+        sort_order = ?, color_options = ?, option_notes = ?, product_options_json = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       name,
@@ -1057,6 +1132,7 @@ app.put("/api/products/:id", requirePermission("write"), (req, res) => {
       Number(body.sortOrder || 0),
       cleanText(body.colorOptions),
       cleanText(body.optionNotes),
+      JSON.stringify(cleanProductOptions(body.productOptions || [])),
       id
     );
     saveProductRelations(id, body);
@@ -1909,5 +1985,6 @@ setInterval(cleanupExpiredSessions, 60 * 60 * 1000).unref();
 
 app.listen(config.port, () => {
   fs.mkdirSync(config.generatedSiteDir, { recursive: true });
+  console.log(`Kairix Express Page Builder ${appVersion()} starting in ${process.env.NODE_ENV || "development"} on Node ${process.version}`);
   console.log(`Kairix Express Page Builder admin listening on http://localhost:${config.port}`);
 });

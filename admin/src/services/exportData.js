@@ -36,6 +36,32 @@ function imageListSetting(value) {
   return [];
 }
 
+function safeJsonArray(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function productOptions(product) {
+  const structured = safeJsonArray(product.product_options_json)
+    .map((option) => ({
+      type: clean(option.type || "Other"),
+      value: clean(option.value || ""),
+      image: option.image || ""
+    }))
+    .filter((option) => option.type && option.value);
+  if (structured.length) return structured;
+  return String(product.color_options || "")
+    .split(/[,;\n]/)
+    .map((value) => clean(value.trim()))
+    .filter(Boolean)
+    .map((value) => ({ type: "Color", value, image: "" }));
+}
+
 function fileUrl(file) {
   if (!file) return null;
   return `/uploads/${file.stored_name}`;
@@ -195,6 +221,8 @@ export async function buildExportData() {
       gallery,
       descriptionImages,
       setupImages,
+      productOptions: productOptions(product),
+      optionNotes: clean(product.option_notes || ""),
       supportPacks: packs,
       softwareBundles: packs,
       downloads: [...lockedDownloads, ...packDownloads.filter((download) => !lockedDownloads.some((locked) => locked.id === download.id))],

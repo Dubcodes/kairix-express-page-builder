@@ -224,6 +224,7 @@ export function migrate() {
   addColumn("products", "color_options", "TEXT");
   addColumn("products", "option_notes", "TEXT");
   addColumn("products", "publish_state", "TEXT NOT NULL DEFAULT 'draft'");
+  addColumn("products", "product_options_json", "TEXT");
   addColumn("categories", "sort_order", "INTEGER NOT NULL DEFAULT 0");
   addColumn("categories", "archived", "INTEGER NOT NULL DEFAULT 0");
   addColumn("download_objects", "sort_order", "INTEGER NOT NULL DEFAULT 0");

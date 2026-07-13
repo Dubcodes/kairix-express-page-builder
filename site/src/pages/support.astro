@@ -7,6 +7,7 @@ const contactMethods = s.contactMethods?.length ? s.contactMethods : [
   s.supportLink && { label: "Support link", type: "link", value: s.supportLink },
   s.marketplaceUrl && { label: "Marketplace store", type: "marketplace", value: s.marketplaceUrl }
 ].filter(Boolean);
+const fallbackSupportText = "Use the contact details below for product support, manuals, firmware, app downloads, and marketplace order questions.";
 const hrefFor = (method) => method.type === "email"
   ? `mailto:${method.value}`
   : method.type === "phone"
@@ -17,7 +18,7 @@ const hrefFor = (method) => method.type === "email"
   <main>
     <section class="hero inner">
       <h1>Support</h1>
-      <p>Use the contact details below for product help, app downloads, firmware, manuals and marketplace order questions.</p>
+      <p>{s.homeSupportText || fallbackSupportText}</p>
     </section>
     <section class="section inner">
       <div class="grid">
@@ -27,6 +28,12 @@ const hrefFor = (method) => method.type === "email"
             <a href={hrefFor(method)}>{method.value}</a>
           </article>
         ))}
+        {!contactMethods.length && (
+          <article class="card">
+            <h2>Product support</h2>
+            <p class="muted">{fallbackSupportText}</p>
+          </article>
+        )}
       </div>
     </section>
     {s.contactFormEnabled && (

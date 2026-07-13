@@ -569,6 +569,27 @@ button.approve {
   background: #f7f9fc;
 }
 
+.product-options-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.option-table {
+  display: grid;
+  gap: 8px;
+}
+
+.option-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(150px, 1fr) minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+  background: #f8fafc;
+}
+
 .form-section legend {
   padding: 0 6px;
   font-weight: 800;
@@ -1159,6 +1180,7 @@ pre {
   .contact-method-form,
   .demo-tool-card,
   .featured-status-panel,
+  .option-row,
   .mini-row {
     grid-template-columns: 1fr;
     align-items: stretch;

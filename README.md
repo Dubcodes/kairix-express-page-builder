@@ -220,6 +220,33 @@ The generated site can always be rebuilt from the database and uploads.
 
 CSV exports for products, downloads, and Software Bundles are available from the same Settings area.
 
+## Client Update Discipline
+
+Before updating a client stack:
+
+1. Create an in-app backup.
+2. Back up Docker volumes for SQLite, uploads, generated site output, and backups.
+3. Test the change on a demo stack first.
+4. Tag known-good releases when appropriate:
+
+```powershell
+git tag v0.1-client-demo
+git push origin v0.1-client-demo
+```
+
+Do not push untested `main` changes directly to a real client deployment.
+
+After redeploying, run a quick smoke test:
+
+- Log in.
+- Create or edit a product.
+- Upload an image.
+- Publish.
+- Open the preview.
+- Open a product page.
+- Open Support.
+- Test a missing preview route.
+
 ## Marketplace Integrations
 
 Settings -> Marketplace Integrations includes an AliExpress connection foundation. App secrets and tokens are stored encrypted with `ENCRYPTION_SECRET` and are never exported to the generated public support portal. Configure official AliExpress/Open Platform OAuth and signed API endpoints before attempting to connect or fetch product candidates.
