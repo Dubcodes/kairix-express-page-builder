@@ -4,9 +4,18 @@ const path = require("node:path");
 const root = path.resolve("generated-site");
 const textExtensions = new Set([".html", ".js", ".css", ".json", ".xml", ".txt", ".svg"]);
 const checks = [
+  { label: "adminBaseUrl", pattern: /adminBaseUrl/ },
+  { label: "adminBase_url", pattern: /adminBase_url/ },
+  { label: "admin-base-url", pattern: /admin-base-url/ },
   { label: "Page Manager", pattern: /Page Manager/ },
   { label: "Buy Me a Coffee", pattern: /Buy Me a Coffee/i },
   { label: "buymeacoffee", pattern: /buymeacoffee/i },
+  { label: "/api/users", pattern: /\/api\/users\b/ },
+  { label: "/api/invites", pattern: /\/api\/invites\b/ },
+  { label: "/api/backups", pattern: /\/api\/backups\b/ },
+  { label: "/api/audit-events", pattern: /\/api\/audit-events\b/ },
+  { label: "kairix_session", pattern: /kairix_session/ },
+  { label: "kairix_csrf", pattern: /kairix_csrf/ },
   { label: "SESSION_SECRET", pattern: /SESSION_SECRET/ },
   { label: "ENCRYPTION_SECRET", pattern: /ENCRYPTION_SECRET/ },
   { label: "ALIEXPRESS secret/env name", pattern: /ALIEXPRESS_[A-Z_]+/ },

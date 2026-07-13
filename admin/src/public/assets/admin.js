@@ -996,6 +996,7 @@ function filesView() {
         <h2>Media Library</h2>
       </div>
       <p class="muted">Upload product images, manuals, firmware, installers and demo files. Risky software file types are allowed for downloads but are never executed by this app.</p>
+      <p class="muted upload-warning">Only upload files you trust. Firmware, installers, and ZIP files will be downloadable by customers after publishing.</p>
       <form id="fileForm" class="form-grid">
         <label class="wide">Upload files<input name="files" type="file" multiple></label>
         <button type="submit">Upload</button>
@@ -1078,6 +1079,7 @@ function downloadsView() {
             <label>Version number<input name="versionNumber" required></label>
             <label>Release date<input name="releaseDate" type="date"></label>
             <label>Uploaded file<select name="fileId"><option value="">None</option>${optionList(state.files)}</select></label>
+            <p class="field-help wide upload-warning">Only upload files you trust. Firmware, installers, and ZIP files will be downloadable by customers after publishing.</p>
             <label class="wide">External URL<input name="externalUrl"></label>
             <label class="wide">Release notes<textarea name="releaseNotes" data-rich-text data-rich-original-html="" data-rich-plain-text=""></textarea></label>
             <label class="check-row wide"><input name="releaseNotesSource" type="checkbox" data-rich-source="releaseNotes"> Edit HTML source</label>

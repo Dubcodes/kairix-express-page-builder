@@ -2,7 +2,6 @@ export const sampleContent = {
   generatedAt: new Date().toISOString(),
   publicBaseUrl: "http://localhost:4321",
   siteBasePath: "/preview",
-  adminBaseUrl: "http://localhost:8080",
   settings: {
     brandName: "Kairix Demo Support",
     logo: "",

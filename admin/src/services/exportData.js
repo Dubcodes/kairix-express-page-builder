@@ -209,7 +209,6 @@ export async function buildExportData() {
     generatedAt: new Date().toISOString(),
     publicBaseUrl: config.publicBaseUrl,
     siteBasePath: config.publicSiteBasePath,
-    adminBaseUrl: config.adminBaseUrl,
     settings: {
       brandName: settings.brandName || "Kairix Support",
       logo: settings.logo || "",

@@ -34,6 +34,7 @@ const hrefFor = (method) => method.type === "email"
         <h2>Contact support</h2>
         <p class="muted">For order or payment issues, use your marketplace order page. For setup, downloads, manuals or firmware help, send a message here.</p>
         <form id="contactForm" class="card" style="display: grid; gap: 12px;">
+          <label style="position:absolute; left:-10000px; width:1px; height:1px; overflow:hidden;" aria-hidden="true" tabindex="-1">Company website<input name="companyWebsite" autocomplete="off" tabindex="-1"></label>
           <label>Name<input name="name" required></label>
           <label>Email<input name="email" type="email" required></label>
           <label>Product

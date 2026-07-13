@@ -1420,8 +1420,10 @@ app.post("/api/contact-submissions", publicWriteLimiter, (req, res) => {
     email: z.string().email().max(200),
     productId: z.number().nullable().optional(),
     message: z.string().min(1).max(4000),
+    companyWebsite: z.string().max(500).optional(),
     metadata: z.record(z.any()).optional()
   }).parse(req.body);
+  if (cleanText(body.companyWebsite)) return res.json({ ok: true });
   const result = db.prepare(`
     INSERT INTO contact_submissions (name, email, product_id, message, metadata, ip_address)
     VALUES (?, ?, ?, ?, ?, ?)

@@ -395,6 +395,10 @@ textarea {
   padding: 8px 10px;
 }
 
+.upload-warning {
+  color: #7a2e0e;
+}
+
 .marketplace-synced {
   border-color: #a9d6ff;
   background: #f3f9ff;
