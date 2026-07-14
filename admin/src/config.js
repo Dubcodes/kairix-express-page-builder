@@ -71,6 +71,8 @@ export const config = {
   publicBaseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:4321",
   publicSiteBasePath: process.env.PUBLIC_SITE_BASE_PATH ?? "/preview",
   adminBaseUrl: process.env.ADMIN_BASE_URL || "http://localhost:8080",
+  adminHostname: process.env.ADMIN_HOSTNAME || "",
+  publicHostname: process.env.PUBLIC_HOSTNAME || "",
   encryptionSecret,
   aliexpressAuthUrl: process.env.ALIEXPRESS_AUTH_URL || "",
   aliexpressTokenUrl: process.env.ALIEXPRESS_TOKEN_URL || "",

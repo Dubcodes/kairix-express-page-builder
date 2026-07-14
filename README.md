@@ -185,6 +185,49 @@ ENABLE_SAMPLE_DATA_TOOLS=false
 
 Set `ENABLE_SAMPLE_DATA_TOOLS=true` only temporarily when an Admin user needs the "Add demo sample batch" testing tool. Turn it off before sharing an admin demo with clients.
 
+### Cloudflare Tunnel deployment
+
+Recommended hostnames:
+
+- `admin-demo.example.com` for the Page Manager admin.
+- `demo.example.com` for the public customer preview.
+
+Create Cloudflare Tunnel public hostnames for both names and point both services to the same Page Manager admin service, for example:
+
+```text
+http://192.168.0.238:8040
+```
+
+For a Portainer stack behind Cloudflare HTTPS, use environment values like:
+
+```env
+NODE_ENV=production
+TRUST_PROXY=true
+COOKIE_SECURE=true
+ENABLE_SAMPLE_DATA_TOOLS=false
+ADMIN_BASE_URL=https://admin-demo.example.com
+PUBLIC_BASE_URL=https://demo.example.com
+PUBLIC_SITE_BASE_PATH=/preview
+ADMIN_HOSTNAME=admin-demo.example.com
+PUBLIC_HOSTNAME=demo.example.com
+```
+
+Protect the admin hostname with Cloudflare Access. Keep the public hostname open for clients/viewers.
+
+When `PUBLIC_HOSTNAME` is set, matching public-hostname requests are restricted:
+
+- `/` redirects to `/preview/`.
+- `/preview/` and `/preview/*` serve the generated public customer site.
+- `/uploads/*` serves public uploaded assets used by the generated site.
+- `/api/contact-submissions` and `/api/track` remain available for the public contact form and analytics.
+- Other admin or API routes return a public-safe 404 and do not serve the Page Manager UI.
+
+Do not expose Portainer itself publicly. Keep sample data tools disabled before sharing with clients.
+
+Cloudflare R2 can be used later for off-server backups, uploaded media/software storage, and static customer site hosting. For the first client demo, keep local Docker volumes as the source of truth, back up Docker volumes before redeploys, and do not switch primary storage to R2 until it has been tested end to end.
+
+For a clean demo rebuild, use a separate Portainer stack name for each demo/client so it gets separate Docker volumes. Reset a demo by creating an in-app backup, then deleting that demo stack and its volumes. Do not manually edit the SQLite database, and do not add a destructive reset button to the UI.
+
 ### Temporary client demo via Portainer
 
 1. Push the repo to GitHub.

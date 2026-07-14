@@ -1084,12 +1084,13 @@ function supportSettingsView() {
 }
 
 function advancedSettingsView() {
+  const previewUrl = state.me?.publicPreviewUrl || "/preview/";
   return `
     <section class="panel">
       <h2>Advanced Settings</h2>
       <p class="muted">Deployment and provider settings for Portainer, local preview, and future Cloudflare support.</p>
       <div class="list">
-        <div class="item" id="diagnosticsCard"><h3>App/server diagnostics</h3><p class="muted">Load safe version and runtime information for support. Secrets are not included.</p><div class="actions"><button id="loadDiagnosticsBtn" class="secondary" type="button">Load diagnostics</button><button id="copyDiagnosticsBtn" type="button">Copy diagnostics</button></div><pre id="diagnosticsOutput" class="build-log"></pre></div>
+        <div class="item" id="diagnosticsCard"><h3>App/server diagnostics</h3><p class="muted">Load safe version, hostname, and runtime information for support. Secrets are not included.</p><div class="summary-grid diagnostics-summary" id="diagnosticsSummary"><div><span>Current public preview URL</span><strong>${escapeHtml(previewUrl)}</strong></div><div><span>Public host mode</span><strong>Load diagnostics</strong></div></div><div class="actions"><button id="loadDiagnosticsBtn" class="secondary" type="button">Load diagnostics</button><button id="copyDiagnosticsBtn" type="button">Copy diagnostics</button></div><pre id="diagnosticsOutput" class="build-log"></pre></div>
         <div class="item"><h3>Public site base path</h3><p><code>PUBLIC_SITE_BASE_PATH</code> is currently configured by environment. Local admin preview uses <code>/preview</code>; Cloudflare root deploys should use an empty value.</p></div>
         <div class="item"><h3>Storage provider</h3><p>Local uploads are active. Cloudflare R2 is a placeholder for a later beta.</p></div>
         <div class="item"><h3>Deploy provider</h3><p>Local static generation is active. Cloudflare Pages Direct Upload is scaffolded for a future release.</p></div>
@@ -1097,6 +1098,17 @@ function advancedSettingsView() {
       <button id="loadAuditBtn" type="button">Load audit log</button>
       <div id="auditOutput" class="list"></div>
     </section>
+  `;
+}
+
+function diagnosticsSummaryHtml(diagnostics = {}) {
+  const previewUrl = diagnostics.publicPreviewUrl || state.me?.publicPreviewUrl || "/preview/";
+  return `
+    <div><span>Admin hostname</span><strong>${escapeHtml(diagnostics.adminHostname || "Not set")}</strong></div>
+    <div><span>Public hostname</span><strong>${escapeHtml(diagnostics.publicHostname || "Not set")}</strong></div>
+    <div><span>Public host mode</span><strong>${diagnostics.publicHostModeEnabled ? "Enabled" : "Disabled"}</strong></div>
+    <div><span>Active request host</span><strong>${escapeHtml(diagnostics.activeRequestHost || "Unknown")}</strong></div>
+    <div><span>Current public preview URL</span><strong>${escapeHtml(previewUrl)}</strong></div>
   `;
 }
 
@@ -1987,6 +1999,8 @@ function bindTabEvents(content) {
     },
     loadDiagnosticsBtn: async () => {
       const diagnostics = await api("/api/diagnostics");
+      const summary = document.querySelector("#diagnosticsSummary");
+      if (summary) summary.innerHTML = diagnosticsSummaryHtml(diagnostics);
       document.querySelector("#diagnosticsOutput").textContent = JSON.stringify(diagnostics, null, 2);
       setStatus("Diagnostics loaded.");
     },

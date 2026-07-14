@@ -185,6 +185,44 @@ function publicPreviewUrl(pathname = "/") {
   return `${origin}${fullPath.endsWith("/") ? fullPath : `${fullPath}/`}`;
 }
 
+function normalizeHostname(value = "") {
+  const first = String(value || "").split(",")[0].trim().toLowerCase();
+  if (!first) return "";
+  const withoutProtocol = first.replace(/^https?:\/\//, "");
+  if (withoutProtocol.startsWith("[")) return withoutProtocol.slice(1, withoutProtocol.indexOf("]"));
+  return withoutProtocol.split(":")[0];
+}
+
+function requestHostname(req) {
+  const forwardedHost = config.trustProxy ? req.get("x-forwarded-host") : "";
+  return normalizeHostname(forwardedHost || req.get("host") || req.hostname || "");
+}
+
+function publicHostModeEnabled() {
+  return Boolean(normalizeHostname(config.publicHostname));
+}
+
+function isPublicHostnameRequest(req) {
+  const publicHostname = normalizeHostname(config.publicHostname);
+  return Boolean(publicHostname) && requestHostname(req) === publicHostname;
+}
+
+function publicSafeNotFound(req, res) {
+  if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
+  return res.status(404).type("text").send("Public page not found.");
+}
+
+function publicHostnameGuard(req, res, next) {
+  if (!isPublicHostnameRequest(req)) return next();
+  const method = req.method.toUpperCase();
+  const publicPostApi = method === "POST" && ["/api/contact-submissions", "/api/track"].includes(req.path);
+  if (publicPostApi) return next();
+  if (method !== "GET" && method !== "HEAD") return publicSafeNotFound(req, res);
+  if (req.path === "/" || req.path === "") return res.redirect(302, "/preview/");
+  if (req.path === "/healthz" || req.path === "/favicon.ico" || req.path === "/preview" || req.path.startsWith("/preview/") || req.path.startsWith("/uploads/")) return next();
+  return publicSafeNotFound(req, res);
+}
+
 function hasPublishedSite() {
   return Boolean(db.prepare("SELECT id FROM publish_events WHERE status = 'success' ORDER BY id DESC LIMIT 1").get());
 }
@@ -509,6 +547,8 @@ app.get("/healthz", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.use(publicHostnameGuard);
+
 app.get("/api/setup/status", (_req, res) => {
   res.json({ needsSetup: userCount() === 0 });
 });
@@ -600,7 +640,7 @@ app.get("/api/settings", requireAuth, (req, res) => {
   res.json(getSettings());
 });
 
-app.get("/api/diagnostics", requireAdmin, (_req, res) => {
+app.get("/api/diagnostics", requireAdmin, (req, res) => {
   const latestPublish = db.prepare("SELECT status, message, created_at FROM publish_events ORDER BY created_at DESC LIMIT 1").get() || null;
   const lastSuccess = db.prepare("SELECT created_at FROM publish_events WHERE status = 'success' ORDER BY created_at DESC LIMIT 1").get() || null;
   res.json({
@@ -608,8 +648,13 @@ app.get("/api/diagnostics", requireAdmin, (_req, res) => {
     nodeEnv: process.env.NODE_ENV || "development",
     nodeVersion: process.version,
     platform: process.platform,
+    adminHostname: config.adminHostname,
+    publicHostname: config.publicHostname,
+    activeRequestHost: requestHostname(req),
+    publicHostModeEnabled: publicHostModeEnabled(),
     publicBaseUrl: config.publicBaseUrl,
     publicSiteBasePath: config.publicSiteBasePath,
+    publicPreviewUrl: publicPreviewUrl("/"),
     adminBaseUrl: config.adminBaseUrl,
     cookieSecure: config.cookieSecure,
     trustProxy: config.trustProxy,
@@ -1986,6 +2031,10 @@ app.use("/preview", (req, res, next) => {
   if (!fs.existsSync(indexPath)) return servePreviewFallback(req, res);
   return previewStatic(req, res, next);
 }, servePreviewFallback);
+app.use((req, res, next) => {
+  if (isPublicHostnameRequest(req)) return publicSafeNotFound(req, res);
+  next();
+});
 app.use(express.static(path.join(config.adminSrcDir, "public")));
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
