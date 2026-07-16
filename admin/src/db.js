@@ -8,6 +8,7 @@ fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
 export const db = new Database(config.databasePath);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
+db.pragma("busy_timeout = 5000");
 
 export const ROLES = [
   "Admin",
@@ -237,6 +238,9 @@ export function migrate() {
   addColumn("support_packs", "archived", "INTEGER NOT NULL DEFAULT 0");
   addColumn("support_packs", "sort_order", "INTEGER NOT NULL DEFAULT 0");
   db.prepare("CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash)").run();
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)").run();
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_publish_events_created_at ON publish_events(created_at)").run();
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at)").run();
 
   db.prepare("UPDATE products SET publish_state = 'not_ready' WHERE publish_state IN ('ready', 'needs_review')").run();
   db.prepare("UPDATE products SET archived = 1, featured = 0 WHERE publish_state = 'archived'").run();
@@ -433,7 +437,7 @@ export function userCount() {
 }
 
 export function cleanupExpiredSessions() {
-  db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run();
+  db.prepare("DELETE FROM sessions WHERE julianday(expires_at) <= julianday('now')").run();
 }
 
 migrate();

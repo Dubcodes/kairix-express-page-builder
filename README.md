@@ -12,12 +12,12 @@ A local demo of a low-cost static product support portal builder for AliExpress/
 - Admin can create categories, products, media files, downloads, versions, and Software Bundles.
 - Products can track publish state, stock display, related products, Software Bundles, and latest linked downloads.
 - Software Bundles can auto-generate ZIP files during publish when local files are attached.
-- Optional public contact form submissions are stored in the Page Manager, not in the static public site.
+- Optional contact-form submissions and local analytics work only in private local-preview mode; Cloudflare output has no private runtime API dependency.
 - QR codes are generated during publish for product support URLs and marketplace links.
 - Publish exports structured content to Astro and builds static files into `generated-site`.
 - Public pages are static and do not need the SQLite database at runtime.
 - The Page Manager includes CSRF protection for authenticated write requests, audit events for important admin actions, and basic local analytics.
-- Local storage and deploy providers exist now, with Cloudflare R2/Pages placeholders for later.
+- Local preview and Cloudflare Pages Direct Upload deploy providers are available. Cloudflare R2 remains intentionally inactive.
 
 ## Project Structure
 
@@ -61,7 +61,7 @@ The generated public site is base-path aware. Local Page Manager preview uses:
 PUBLIC_SITE_BASE_PATH=/preview
 ```
 
-That keeps generated links such as Home, Downloads, Support, product pages, category pages, and version-history pages under `/preview/` when served by the admin app. For a future Cloudflare Pages root deployment, use an empty value:
+That keeps generated links such as Home, Downloads, Support, product pages, category pages, and version-history pages under `/preview/` when served by the admin app. For a Cloudflare Pages root deployment, use an empty value:
 
 ```env
 PUBLIC_SITE_BASE_PATH=
@@ -136,7 +136,7 @@ The compose stack runs the Page Manager admin/backend plus an optional nginx `pu
 Ports:
 
 - Page Manager admin/backend: `${ADMIN_PORT:-8080}` -> container `8080`
-- Static preview: `${PUBLIC_PREVIEW_PORT:-4321}` -> container `80`
+- Static preview: `127.0.0.1:${PUBLIC_PREVIEW_PORT:-4321}` -> container `80`
 
 Volumes:
 
@@ -145,88 +145,17 @@ Volumes:
 - `kairix-generated-site` stores the generated static website.
 - Manual backup ZIPs are written under `data/backups/` inside `kairix-data`.
 
-### Preview URL modes
+### Local preview and Cloudflare production
 
-Mode A: single admin URL with built-in preview
+Local mode (`DEPLOY_PROVIDER=local`) updates the private generated-site preview. Use `PUBLIC_SITE_BASE_PATH=/preview` for the built-in Page Manager preview. Compose binds the optional nginx preview to `127.0.0.1` so it is not a production public endpoint.
 
-- Expose only the admin service.
-- Public preview is served by the admin at `/preview/`.
-- Set `PUBLIC_SITE_BASE_PATH=/preview`.
-- Set `PUBLIC_BASE_URL` to the admin hostname origin.
+Cloudflare mode (`DEPLOY_PROVIDER=cloudflare-pages`) builds and validates a root static site, performs a non-interactive existing-project preflight, deploys with the pinned installed Wrangler CLI, and then atomically updates the local preview. Set `PUBLIC_SITE_BASE_PATH=` and leave `PUBLIC_HOSTNAME=` empty. Public visitors must use Cloudflare Pages; do not create a public Tunnel hostname to the Page Manager or preview.
 
-Mode B: separate static public preview URL
+The private Page Manager may still use an authenticated Cloudflare Tunnel or another HTTPS reverse proxy. Protect it with access controls and set `TRUST_PROXY=true`, `COOKIE_SECURE=true`, and the final HTTPS `ADMIN_BASE_URL`. Production secrets must be different random values of at least 32 characters.
 
-- Expose `public-preview` separately.
-- Set `PUBLIC_SITE_BASE_PATH=` for a root static preview, or `/preview` if the static preview should also live under `/preview/`.
-- `docker-compose.yml` intentionally uses `${PUBLIC_SITE_BASE_PATH-/preview}` so an empty value is preserved. Do not change it to `${PUBLIC_SITE_BASE_PATH:-/preview}` unless you want empty values to fall back to `/preview`.
-- The nginx preview config serves both `/` and `/preview/`, including `/preview/_astro/...` and `/preview/uploads/...`.
-- If a previous failed Portainer deploy created `docker/nginx-preview.conf` as a directory, delete/recreate the failed stack after pulling this fix.
+The exact project/token/Portainer setup, diagnostics, rollback, rotation, emergency-disable steps, and checklist are in [docs/CLOUDFLARE_PAGES_RUNBOOK.md](docs/CLOUDFLARE_PAGES_RUNBOOK.md). Security/reliability findings and remaining risks are in [docs/SECURITY_RELIABILITY_AUDIT.md](docs/SECURITY_RELIABILITY_AUDIT.md).
 
-In production, put the Page Manager admin behind HTTPS using Cloudflare Tunnel, a reverse proxy, or another TLS proxy. Set:
-
-```env
-NODE_ENV=production
-TRUST_PROXY=true
-COOKIE_SECURE=true
-ADMIN_BASE_URL=https://your-admin-demo.example.com
-PUBLIC_BASE_URL=https://your-admin-demo.example.com
-PUBLIC_SITE_BASE_PATH=/preview
-SESSION_SECRET=replace-with-long-random-secret
-ENCRYPTION_SECRET=replace-with-different-long-random-secret
-```
-
-`SESSION_SECRET` and `ENCRYPTION_SECRET` are required in production, must be different, and must not use placeholder values. The app fails fast if production secrets are missing or still set to known defaults.
-
-Demo sample-data tools are disabled by default in production and Portainer deployments:
-
-```env
-ENABLE_SAMPLE_DATA_TOOLS=false
-```
-
-Set `ENABLE_SAMPLE_DATA_TOOLS=true` only temporarily when an Admin user needs the "Add demo sample batch" testing tool. Turn it off before sharing an admin demo with clients.
-
-### Cloudflare Tunnel deployment
-
-Recommended hostnames:
-
-- `admin-demo.example.com` for the Page Manager admin.
-- `demo.example.com` for the public customer preview.
-
-Create Cloudflare Tunnel public hostnames for both names and point both services to the same Page Manager admin service, for example:
-
-```text
-http://192.168.0.238:8040
-```
-
-For a Portainer stack behind Cloudflare HTTPS, use environment values like:
-
-```env
-NODE_ENV=production
-TRUST_PROXY=true
-COOKIE_SECURE=true
-ENABLE_SAMPLE_DATA_TOOLS=false
-ADMIN_BASE_URL=https://admin-demo.example.com
-PUBLIC_BASE_URL=https://demo.example.com
-PUBLIC_SITE_BASE_PATH=/preview
-ADMIN_HOSTNAME=admin-demo.example.com
-PUBLIC_HOSTNAME=demo.example.com
-```
-
-Protect the admin hostname with Cloudflare Access. Keep the public hostname open for clients/viewers.
-
-When `PUBLIC_HOSTNAME` is set, matching public-hostname requests are restricted:
-
-- `/` redirects to `/preview/`.
-- `/preview/` and `/preview/*` serve the generated public customer site.
-- `/uploads/*` serves public uploaded assets used by the generated site.
-- `/api/contact-submissions` and `/api/track` remain available for the public contact form and analytics.
-- Other admin or API routes return a public-safe 404 and do not serve the Page Manager UI.
-
-Do not expose Portainer itself publicly. Keep sample data tools disabled before sharing with clients.
-
-Cloudflare R2 can be used later for off-server backups, uploaded media/software storage, and static customer site hosting. For the first client demo, keep local Docker volumes as the source of truth, back up Docker volumes before redeploys, and do not switch primary storage to R2 until it has been tested end to end.
-
-For a clean demo rebuild, use a separate Portainer stack name for each demo/client so it gets separate Docker volumes. Reset a demo by creating an in-app backup, then deleting that demo stack and its volumes. Do not manually edit the SQLite database, and do not add a destructive reset button to the UI.
+Do not expose Portainer publicly. Keep `ENABLE_SAMPLE_DATA_TOOLS=false` in production. For a clean demo rebuild, create an in-app backup, use a separate stack name/volumes, and never edit SQLite by hand.
 
 ### Temporary client demo via Portainer
 
@@ -239,8 +168,8 @@ For a clean demo rebuild, use a separate Portainer stack name for each demo/clie
 7. Complete first-run setup.
 8. Create sample/demo content manually, import safe demo content, or temporarily enable `ENABLE_SAMPLE_DATA_TOOLS=true` and use "Add demo sample batch".
 9. Click Publish.
-10. Test `/preview/` on the admin URL, or the public-preview URL if exposing it separately.
-11. Share only the public preview URL with clients unless they need admin access.
+10. Test `/preview/` on the admin URL or localhost-only `public-preview` as an operator.
+11. In Cloudflare mode, share only the Cloudflare Pages/custom-domain URL with clients.
 12. If sharing admin access, create a temporary demo user and remove or disable it afterward.
 
 Warnings:
@@ -306,14 +235,10 @@ Settings -> Marketplace Integrations includes an AliExpress connection foundatio
 - User, invite, login, product, bundle, settings, and publish actions are written to an audit log.
 - Uploads are stored outside executable code paths.
 - The public site is generated static output and has no database credentials.
-- `.env.example` documents secrets and Cloudflare placeholders; real secrets must stay in `.env`.
+- `.env.example` documents variable names only; real secrets must stay in private environment/Portainer secret configuration.
 
-## Cloudflare Future Notes
+## Cloudflare Pages and deferred R2
 
-The v1 publish flow is local only. It is structured so later iterations can add:
+Cloudflare Pages Direct Upload is implemented through `CloudflarePagesDeployProvider` and the real Publish workflow. Wrangler is exact-pinned as a runtime dependency; publish never downloads a CLI dynamically. Cloudflare credentials are server environment values and never browser-editable settings.
 
-- Cloudflare Pages Direct Upload using `CloudflarePagesDeployProvider`.
-- Cloudflare R2 download storage using `R2StorageProvider`.
-- Settings placeholders for account IDs, project name, API token, bucket, access key, and secret key.
-
-Later generated static files from `generated-site` can be uploaded to Cloudflare Pages, and downloads can move from local filesystem uploads to R2 without changing the public template model.
+Cloudflare R2 is deliberately deferred. `R2StorageProvider` is an inactive placeholder; uploads, downloads, and generated Software Bundle ZIPs continue to be packaged into the validated Pages deployment.

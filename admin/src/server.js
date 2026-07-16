@@ -28,7 +28,8 @@ import {
   verifyPassword
 } from "./middleware/auth.js";
 import { storageProvider } from "./providers/storage.js";
-import { publishSite } from "./services/publish.js";
+import { cancelActivePublish, cleanupPublishTemp, publishSite, publishStatus } from "./services/publish.js";
+import { redactSecrets } from "./providers/deploy.js";
 import { encryptSecret, decryptSecret } from "./services/cryptoBox.js";
 import { buildAuthUrl, exchangeCodeForToken, fetchProductList, normalizeAliExpressProduct, testConnection } from "./services/aliexpress.js";
 import { createBackup, inspectBackup, listBackups } from "./services/backups.js";
@@ -39,6 +40,7 @@ await storageProvider.ensureReady();
 for (const dir of [config.uploadsDir, config.generatedSiteDir, config.generatedSiteBuildDir, config.backupsDir, path.dirname(config.databasePath)]) {
   fs.mkdirSync(dir, { recursive: true });
 }
+await cleanupPublishTemp();
 
 if (config.trustProxy) app.set("trust proxy", 1);
 
@@ -75,6 +77,13 @@ const acceptLimiter = rateLimit({
   legacyHeaders: false
 });
 
+const setupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 const publicWriteLimiter = rateLimit({
   windowMs: 60 * 1000,
   limit: 120,
@@ -91,10 +100,18 @@ const upload = multer({
       cb(null, `${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${base}${ext}`);
     }
   }),
-  limits: { fileSize: config.maxUploadMb * 1024 * 1024 },
+  limits: {
+    fileSize: config.maxUploadMb * 1024 * 1024,
+    files: 12,
+    fields: 100,
+    parts: 112,
+    fieldNameSize: 100,
+    fieldSize: 1024 * 1024
+  },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (!config.allowedUploadExtensions.has(ext) || !config.allowedUploadMimeTypes.has(file.mimetype)) {
+    const allowedMimeTypes = config.allowedUploadMimeTypesByExtension.get(ext);
+    if (!config.allowedUploadExtensions.has(ext) || !allowedMimeTypes?.has(file.mimetype)) {
       cb(new Error(`Unsupported file type: ${file.originalname} (${file.mimetype})`));
       return;
     }
@@ -128,7 +145,9 @@ function csrfProtection(req, res, next) {
   if (!req.user) return next();
   const cookieToken = req.cookies?.kairix_csrf;
   const headerToken = req.get("x-csrf-token");
-  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+  const cookieBuffer = Buffer.from(String(cookieToken || ""));
+  const headerBuffer = Buffer.from(String(headerToken || ""));
+  if (!cookieToken || !headerToken || cookieBuffer.length !== headerBuffer.length || !crypto.timingSafeEqual(cookieBuffer, headerBuffer)) {
     return res.status(403).json({ error: "CSRF token is missing or invalid" });
   }
   next();
@@ -336,7 +355,7 @@ function safePublishEvent(row) {
   } catch {
     // Existing rows may be plain text.
   }
-  return { status: row.status, created_at: row.created_at, message: cleanText(summary).slice(0, 300) };
+  return { id: row.id, status: row.status, created_at: row.created_at, message: cleanText(summary).slice(0, 300) };
 }
 
 function fileRecord(row) {
@@ -345,7 +364,6 @@ function fileRecord(row) {
     id: row.id,
     originalName: row.original_name,
     storedName: row.stored_name,
-    path: row.path,
     url: `/uploads/${row.stored_name}`,
     mimeType: row.mime_type,
     size: row.size,
@@ -358,11 +376,41 @@ function hashFile(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
+function uploadContentMatchesExtension(file) {
+  const ext = path.extname(file.originalname).toLowerCase();
+  const buffer = fs.readFileSync(file.path);
+  const starts = (...bytes) => bytes.every((byte, index) => buffer[index] === byte);
+  if ([".bin", ".hex", ".uf2"].includes(ext)) return true;
+  if (ext === ".jpg" || ext === ".jpeg") return starts(0xff, 0xd8, 0xff);
+  if (ext === ".png") return starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+  if (ext === ".gif") return ["GIF87a", "GIF89a"].includes(buffer.subarray(0, 6).toString("ascii"));
+  if (ext === ".webp") return buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
+  if (ext === ".pdf") return buffer.subarray(0, 5).toString("ascii") === "%PDF-";
+  if (ext === ".zip") return starts(0x50, 0x4b) && [0x03, 0x05, 0x07].includes(buffer[2]) && [0x04, 0x06, 0x08].includes(buffer[3]);
+  if (ext === ".exe") return starts(0x4d, 0x5a);
+  if (ext === ".msi") return starts(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1);
+  if (ext === ".pkg") return buffer.subarray(0, 4).toString("ascii") === "xar!";
+  if (ext === ".dmg") return buffer.length >= 512 && buffer.subarray(buffer.length - 512, buffer.length - 508).toString("ascii") === "koly";
+  if (ext === ".txt") return !buffer.includes(0);
+  if (ext === ".svg") {
+    const text = buffer.toString("utf8").replace(/^\uFEFF/, "").trim();
+    return /<svg\b/i.test(text)
+      && !/<(?:script|foreignObject|iframe|object|embed)\b/i.test(text)
+      && !/\son[a-z]+\s*=/i.test(text)
+      && !/(?:javascript:|data:text\/html|<!DOCTYPE|<!ENTITY)/i.test(text);
+  }
+  return false;
+}
+
 function removeUploadedTempFile(filePath) {
   if (isSafeUploadPath(filePath) && fs.existsSync(filePath)) fs.rmSync(filePath, { force: true });
 }
 
 function saveUploadedFileRecord(file) {
+  if (!uploadContentMatchesExtension(file)) {
+    removeUploadedTempFile(file.path);
+    throw new Error(`File content does not match its extension: ${file.originalname}`);
+  }
   const contentHash = hashFile(file.path);
   const duplicate = db.prepare("SELECT * FROM files WHERE content_hash = ? ORDER BY id").all(contentHash)
     .find((row) => row.path && fs.existsSync(row.path));
@@ -462,6 +510,7 @@ function getMarketplaceConnection(marketplace = "aliexpress", { includeSecrets =
   delete connection.app_secret_encrypted;
   delete connection.access_token_encrypted;
   delete connection.refresh_token_encrypted;
+  if (!includeSecrets) delete connection.metadata;
   return connection;
 }
 
@@ -544,7 +593,18 @@ function requireAdmin(req, res, next) {
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get("/healthz", (_req, res) => {
-  res.json({ ok: true });
+  let databaseReady = true;
+  try {
+    db.prepare("SELECT 1").get();
+  } catch {
+    databaseReady = false;
+  }
+  const ok = databaseReady && config.productionSafetyIssues.length === 0;
+  res.status(ok ? 200 : 503).json({
+    ok,
+    databaseReady,
+    productionConfigurationReady: config.productionSafetyIssues.length === 0
+  });
 });
 
 app.use(publicHostnameGuard);
@@ -553,34 +613,48 @@ app.get("/api/setup/status", (_req, res) => {
   res.json({ needsSetup: userCount() === 0 });
 });
 
-app.post("/api/setup", requireSetupOpen, upload.single("logo"), asyncRoute(async (req, res) => {
+app.post("/api/setup", setupLimiter, requireSetupOpen, upload.single("logo"), asyncRoute(async (req, res) => {
   const schema = z.object({
-    brandName: z.string().min(2),
-    marketplaceUrl: z.string().optional(),
-    username: z.string().min(3),
+    brandName: z.string().min(2).max(120),
+    marketplaceUrl: z.string().max(2048).optional(),
+    username: z.string().min(3).max(100),
     email: z.string().email().optional().or(z.literal("")),
-    password: z.string().min(10)
+    password: z.string().min(10).max(1024)
   });
   const input = schema.parse(req.body);
   const passwordHash = await hashPassword(input.password);
-  db.prepare("INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, 'Admin')")
-    .run(cleanText(input.username), cleanText(input.email), passwordHash);
-  setSetting("brandName", cleanText(input.brandName));
-  setSetting("marketplaceUrl", cleanText(input.marketplaceUrl));
-  setSetting("theme", "clean-light");
-  setSetting("defaultMarketplaceLabel", "Buy on AliExpress");
-  if (req.file) {
-    const result = saveUploadedFileRecord(req.file);
-    setSetting("logo", result.file.url);
-    setSetting("logoFileId", String(result.file.id));
+  let created;
+  try {
+    created = db.transaction(() => {
+      if (userCount() > 0) return false;
+      db.prepare("INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, 'Admin')")
+        .run(cleanText(input.username), cleanText(input.email), passwordHash);
+      setSetting("brandName", cleanText(input.brandName));
+      setSetting("marketplaceUrl", cleanText(input.marketplaceUrl));
+      setSetting("theme", "clean-light");
+      setSetting("defaultMarketplaceLabel", "Buy on AliExpress");
+      if (req.file) {
+        const result = saveUploadedFileRecord(req.file);
+        setSetting("logo", result.file.url);
+        setSetting("logoFileId", String(result.file.id));
+      }
+      return true;
+    })();
+  } catch (error) {
+    if (req.file) removeUploadedTempFile(req.file.path);
+    throw error;
+  }
+  if (!created) {
+    if (req.file) removeUploadedTempFile(req.file.path);
+    return res.status(409).json({ error: "First-run setup has already been completed" });
   }
   res.json({ ok: true });
 }));
 
 app.post("/api/login", loginLimiter, asyncRoute(async (req, res) => {
   const { username, password } = z.object({
-    username: z.string().min(1),
-    password: z.string().min(1)
+    username: z.string().min(1).max(200),
+    password: z.string().min(1).max(1024)
   }).parse(req.body);
   const user = db.prepare("SELECT * FROM users WHERE username = ? OR email = ?").get(username, username);
   if (!user || !(await verifyPassword(password, user.password_hash))) {
@@ -601,6 +675,7 @@ app.post("/api/login", loginLimiter, asyncRoute(async (req, res) => {
     return res.status(403).json({ error: "This temporary support access has expired" });
   }
   db.prepare("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?").run(user.id);
+  destroySession(req.cookies?.kairix_session);
   const session = createSession(user.id);
   res.cookie("kairix_session", session.token, sessionCookieOptions());
   res.cookie("kairix_csrf", csrfToken(), csrfCookieOptions());
@@ -609,7 +684,7 @@ app.post("/api/login", loginLimiter, asyncRoute(async (req, res) => {
   res.json({ ok: true, user: { id: user.id, username: user.username, email: user.email, role: user.role } });
 }));
 
-app.post("/api/logout", (req, res) => {
+app.post("/api/logout", requireAuth, (req, res) => {
   audit(req, "logout", { entityType: "user", entityId: req.user?.id || null, message: "User logged out" });
   destroySession(req.cookies?.kairix_session);
   res.clearCookie("kairix_session", { path: "/" });
@@ -659,6 +734,12 @@ app.get("/api/diagnostics", requireAdmin, (req, res) => {
     cookieSecure: config.cookieSecure,
     trustProxy: config.trustProxy,
     sampleDataToolsEnabled: config.sampleDataToolsEnabled,
+    deployProvider: config.deployProvider,
+    cloudflareProjectConfigured: Boolean(config.cloudflareAccountId && config.cloudflarePagesProject && config.cloudflareApiToken),
+    cloudflarePagesProject: config.cloudflarePagesProject,
+    cloudflarePagesBranch: config.cloudflarePagesBranch,
+    publishInProgress: publishStatus(),
+    productionSafetyIssues: config.productionSafetyIssues,
     maxUploadMb: config.maxUploadMb,
     hasPublishedSite: hasPublishedSite(),
     lastSuccessfulPublishAt: lastSuccess?.created_at || null,
@@ -775,32 +856,35 @@ app.post("/api/import-export/csv/preview", requirePermission("write"), (req, res
   });
 });
 
-app.get("/api/backups", requirePermission("write"), (_req, res) => {
+app.get("/api/backups", requireAdmin, (_req, res) => {
   res.json({ backups: listBackups() });
 });
 
-app.post("/api/backups", requirePermission("write"), asyncRoute(async (req, res) => {
+app.post("/api/backups", requireAdmin, asyncRoute(async (req, res) => {
   const backup = await createBackup({ kind: "manual", createdBy: req.user.id });
   audit(req, "backup_create", { entityType: "backup", message: `Created backup ${backup.filename}`, metadata: { size: backup.size } });
   res.json({ backup: { filename: backup.filename, size: backup.size, manifest: backup.manifest } });
 }));
 
-app.get("/api/backups/:filename/inspect", requirePermission("write"), asyncRoute(async (req, res) => {
+app.get("/api/backups/:filename/inspect", requireAdmin, asyncRoute(async (req, res) => {
   res.json({ backup: await inspectBackup(req.params.filename) });
 }));
 
-app.get("/api/backups/:filename/download", requirePermission("write"), (req, res) => {
+app.get("/api/backups/:filename/download", requireAdmin, (req, res) => {
   const filename = path.basename(req.params.filename);
+  if (filename !== req.params.filename || !/^kairix-[a-z0-9_-]+-[a-z0-9TZ.-]+\.zip$/i.test(filename)) {
+    return res.status(400).json({ error: "Invalid backup filename" });
+  }
   const filepath = path.join(config.backupsDir, filename);
   if (!fs.existsSync(filepath)) return res.status(404).json({ error: "Backup not found" });
   res.download(filepath, filename);
 });
 
-app.get("/api/integrations/aliexpress/status", requireAuth, (_req, res) => {
+app.get("/api/integrations/aliexpress/status", requireAdmin, (_req, res) => {
   res.json({ connection: getMarketplaceConnection("aliexpress") });
 });
 
-app.put("/api/integrations/aliexpress/settings", requirePermission("write"), (req, res) => {
+app.put("/api/integrations/aliexpress/settings", requireAdmin, (req, res) => {
   const body = z.object({
     enabled: z.boolean().optional(),
     appKey: z.string().optional(),
@@ -814,7 +898,7 @@ app.put("/api/integrations/aliexpress/settings", requirePermission("write"), (re
   res.json({ connection });
 });
 
-app.post("/api/integrations/aliexpress/connect", requirePermission("write"), (req, res) => {
+app.post("/api/integrations/aliexpress/connect", requireAdmin, (req, res) => {
   try {
     const token = createOneTimeToken();
     const connection = getMarketplaceConnection("aliexpress", { includeSecrets: true });
@@ -831,8 +915,23 @@ app.get("/api/integrations/aliexpress/callback", asyncRoute(async (req, res) => 
   const code = cleanText(req.query.code);
   const state = cleanText(req.query.state);
   const row = db.prepare("SELECT * FROM marketplace_connections WHERE marketplace = 'aliexpress'").get();
-  const metadata = row?.metadata ? JSON.parse(row.metadata) : {};
-  if (!row || !metadata.oauthStateHash || hashInviteToken(state) !== metadata.oauthStateHash) return res.status(400).send("Invalid AliExpress callback state");
+  let metadata = {};
+  try {
+    metadata = row?.metadata ? JSON.parse(row.metadata) : {};
+  } catch {
+    metadata = {};
+  }
+  const actualHash = hashInviteToken(state);
+  const expectedHash = String(metadata.oauthStateHash || "");
+  const actualBuffer = Buffer.from(actualHash);
+  const expectedBuffer = Buffer.from(expectedHash);
+  const startedAt = Date.parse(metadata.startedAt || "");
+  const validAge = Number.isFinite(startedAt) && Date.now() - startedAt >= 0 && Date.now() - startedAt <= 10 * 60 * 1000;
+  const validState = code && state && expectedHash && actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+  if (!row || !validAge || !validState) return res.status(400).send("Invalid or expired AliExpress callback state");
+  const consumed = db.prepare("UPDATE marketplace_connections SET metadata = '{}', updated_at = CURRENT_TIMESTAMP WHERE marketplace = 'aliexpress' AND metadata = ?")
+    .run(row.metadata).changes;
+  if (!consumed) return res.status(400).send("AliExpress callback state has already been used");
   const tokens = await exchangeCodeForToken(getMarketplaceConnection("aliexpress", { includeSecrets: true }), code);
   db.prepare(`
     UPDATE marketplace_connections SET
@@ -846,7 +945,7 @@ app.get("/api/integrations/aliexpress/callback", asyncRoute(async (req, res) => 
   res.redirect("/#settings/integrations");
 }));
 
-app.post("/api/integrations/aliexpress/disconnect", requirePermission("write"), (req, res) => {
+app.post("/api/integrations/aliexpress/disconnect", requireAdmin, (req, res) => {
   db.prepare(`
     UPDATE marketplace_connections SET access_token_encrypted = '', refresh_token_encrypted = '', token_expires_at = NULL,
       status = 'disconnected', last_test_at = NULL, updated_at = CURRENT_TIMESTAMP
@@ -856,7 +955,7 @@ app.post("/api/integrations/aliexpress/disconnect", requirePermission("write"), 
   res.json({ connection: getMarketplaceConnection("aliexpress") });
 });
 
-app.post("/api/integrations/aliexpress/test", requirePermission("write"), asyncRoute(async (_req, res) => {
+app.post("/api/integrations/aliexpress/test", requireAdmin, asyncRoute(async (_req, res) => {
   try {
     await testConnection(getMarketplaceConnection("aliexpress", { includeSecrets: true }));
     db.prepare("UPDATE marketplace_connections SET status = 'connected', last_test_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE marketplace = 'aliexpress'").run();
@@ -868,13 +967,17 @@ app.post("/api/integrations/aliexpress/test", requirePermission("write"), asyncR
   }
 }));
 
-app.post("/api/integrations/aliexpress/fetch-products", requirePermission("write"), asyncRoute(async (req, res) => {
+app.post("/api/integrations/aliexpress/fetch-products", requireAdmin, asyncRoute(async (req, res) => {
   try {
-    const result = await fetchProductList(getMarketplaceConnection("aliexpress", { includeSecrets: true }), req.body || {});
+    const query = z.object({
+      page_size: z.coerce.number().int().min(1).max(100).default(20),
+      current_page: z.coerce.number().int().min(1).max(10_000).default(1)
+    }).parse(req.body || {});
+    const result = await fetchProductList(getMarketplaceConnection("aliexpress", { includeSecrets: true }), query);
     const rawItems = result.products || result.items || result.result?.products || result.result?.items || [];
     const candidates = rawItems.map(normalizeAliExpressProduct).filter((item) => item.externalId);
     const batchId = db.prepare("INSERT INTO marketplace_import_batches (marketplace, status, source_query, selected_count, created_by) VALUES ('aliexpress', 'fetched', ?, ?, ?)")
-      .run(JSON.stringify(req.body || {}), candidates.length, req.user.id).lastInsertRowid;
+      .run(JSON.stringify(query), candidates.length, req.user.id).lastInsertRowid;
     const insert = db.prepare(`
       INSERT OR IGNORE INTO marketplace_import_candidates
       (batch_id, marketplace, external_id, title, sku, image_url, product_url, price, stock_count, raw_json)
@@ -887,12 +990,12 @@ app.post("/api/integrations/aliexpress/fetch-products", requirePermission("write
   }
 }));
 
-app.get("/api/integrations/aliexpress/import-candidates", requirePermission("write"), (_req, res) => {
+app.get("/api/integrations/aliexpress/import-candidates", requireAdmin, (_req, res) => {
   const candidates = db.prepare("SELECT * FROM marketplace_import_candidates WHERE marketplace = 'aliexpress' ORDER BY created_at DESC LIMIT 100").all();
   res.json({ candidates });
 });
 
-app.post("/api/integrations/aliexpress/import", requirePermission("write"), (req, res) => {
+app.post("/api/integrations/aliexpress/import", requireAdmin, (req, res) => {
   const body = z.object({ candidateIds: z.array(z.number()).min(1) }).parse(req.body);
   const tx = db.transaction(() => {
     const imported = [];
@@ -937,7 +1040,7 @@ app.post("/api/integrations/aliexpress/import", requirePermission("write"), (req
   res.json({ importedProductIds: imported });
 });
 
-app.post("/api/integrations/aliexpress/detach-product/:id", requirePermission("write"), (req, res) => {
+app.post("/api/integrations/aliexpress/detach-product/:id", requireAdmin, (req, res) => {
   db.prepare("DELETE FROM product_marketplace_links WHERE product_id = ? AND marketplace = 'aliexpress'").run(req.params.id);
   db.prepare("UPDATE products SET import_sync_status = NULL, last_imported_at = NULL, stock_source = 'manual' WHERE id = ?").run(req.params.id);
   audit(req, "aliexpress_product_detach", { entityType: "product", entityId: Number(req.params.id), message: "Detached AliExpress link" });
@@ -1416,12 +1519,12 @@ app.post("/api/support-access", requirePermission("write"), (req, res) => {
 
 app.post("/api/invites/accept", acceptLimiter, asyncRoute(async (req, res) => {
   const body = z.object({
-    token: z.string().min(20),
-    username: z.string().min(3),
+    token: z.string().min(20).max(200),
+    username: z.string().min(3).max(100),
     email: z.string().email().optional().or(z.literal("")),
-    password: z.string().min(10)
+    password: z.string().min(10).max(1024)
   }).parse(req.body);
-  const invite = db.prepare("SELECT * FROM invites WHERE token_hash = ? AND used_at IS NULL AND expires_at > datetime('now')")
+  const invite = db.prepare("SELECT * FROM invites WHERE token_hash = ? AND used_at IS NULL AND julianday(expires_at) > julianday('now')")
     .get(hashInviteToken(body.token));
   if (!invite) return res.status(400).json({ error: "Invite link is invalid or expired" });
   const passwordHash = await hashPassword(body.password);
@@ -1447,9 +1550,9 @@ app.get("/api/users", requirePermission("write"), (req, res) => {
 app.post("/api/users", requirePermission("write"), asyncRoute(async (req, res) => {
   if (req.user.role !== "Admin") return res.status(403).json({ error: "Only Admin can create users" });
   const body = z.object({
-    username: z.string().min(3),
+    username: z.string().min(3).max(100),
     email: z.string().email().optional().or(z.literal("")),
-    password: z.string().min(10),
+    password: z.string().min(10).max(1024),
     role: z.string().optional(),
     active: z.boolean().optional()
   }).parse(req.body);
@@ -1487,8 +1590,8 @@ app.post("/api/users/:id/password-reset", requirePermission("write"), (req, res)
 });
 
 app.post("/api/password-reset/complete", acceptLimiter, asyncRoute(async (req, res) => {
-  const body = z.object({ token: z.string().min(20), password: z.string().min(10) }).parse(req.body);
-  const reset = db.prepare("SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > datetime('now')")
+  const body = z.object({ token: z.string().min(20).max(200), password: z.string().min(10).max(1024) }).parse(req.body);
+  const reset = db.prepare("SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND julianday(expires_at) > julianday('now')")
     .get(hashResetToken(body.token));
   if (!reset) return res.status(400).json({ error: "Reset link is invalid or expired" });
   const passwordHash = await hashPassword(body.password);
@@ -1543,16 +1646,18 @@ app.get("/api/analytics", requirePermission("analytics"), (req, res) => {
   res.json({ range, totals, topPages, topProducts, topDownloads, marketplaceClicks, recent });
 });
 
-app.post("/api/track", (req, res) => {
+app.post("/api/track", publicWriteLimiter, (req, res) => {
   const body = z.object({
     eventType: z.enum(["page_view", "product_view", "download_click", "marketplace_click", "qr_opened", "version_history_viewed", "software_bundle_download", "contact_form_submission"]),
-    path: z.string().optional(),
-    productId: z.number().optional(),
-    downloadId: z.number().optional(),
-    metadata: z.record(z.any()).optional()
+    path: z.string().max(500).optional(),
+    productId: z.number().int().positive().optional(),
+    downloadId: z.number().int().positive().optional(),
+    metadata: z.record(z.union([z.string().max(500), z.number(), z.boolean(), z.null()])).optional()
   }).parse(req.body);
+  const metadata = JSON.stringify(body.metadata || {});
+  if (Buffer.byteLength(metadata) > 8 * 1024) return res.status(400).json({ error: "Analytics metadata is too large" });
   db.prepare("INSERT INTO analytics_events (event_type, path, product_id, download_id, metadata) VALUES (?, ?, ?, ?, ?)")
-    .run(body.eventType, cleanText(body.path), body.productId || null, body.downloadId || null, JSON.stringify(body.metadata || {}));
+    .run(body.eventType, cleanText(body.path), body.productId || null, body.downloadId || null, metadata);
   res.json({ ok: true });
 });
 
@@ -1563,13 +1668,15 @@ app.post("/api/contact-submissions", publicWriteLimiter, (req, res) => {
     productId: z.number().nullable().optional(),
     message: z.string().min(1).max(4000),
     companyWebsite: z.string().max(500).optional(),
-    metadata: z.record(z.any()).optional()
+    metadata: z.record(z.union([z.string().max(500), z.number(), z.boolean(), z.null()])).optional()
   }).parse(req.body);
   if (cleanText(body.companyWebsite)) return res.json({ ok: true });
+  const metadata = JSON.stringify(body.metadata || {});
+  if (Buffer.byteLength(metadata) > 8 * 1024) return res.status(400).json({ error: "Contact metadata is too large" });
   const result = db.prepare(`
     INSERT INTO contact_submissions (name, email, product_id, message, metadata, ip_address)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(cleanText(body.name), cleanText(body.email), body.productId || null, cleanText(body.message), JSON.stringify(body.metadata || {}), req.ip || "");
+  `).run(cleanText(body.name), cleanText(body.email), body.productId || null, cleanText(body.message), metadata, req.ip || "");
   res.json({ ok: true, id: result.lastInsertRowid });
 });
 
@@ -1586,12 +1693,22 @@ app.get("/api/contact-submissions", requirePermission("read"), (_req, res) => {
 
 app.post("/api/publish", requirePermission("publish"), asyncRoute(async (req, res) => {
   const result = await publishSite(req.user.id);
-  audit(req, "publish_success", { entityType: "publish", message: "Static site published", metadata: { generatedBundles: result.generatedBundles || [] } });
+  audit(req, "publish_success", {
+    entityType: "publish",
+    message: result.provider === "cloudflare-pages" ? "Static site deployed to Cloudflare Pages" : "Static site published to local preview",
+    metadata: {
+      jobId: result.jobId,
+      provider: result.provider,
+      deploymentId: result.deploymentId || null,
+      deploymentUrl: result.deploymentUrl || null,
+      generatedBundles: result.generatedBundles || []
+    }
+  });
   res.json(result);
 }));
 
 app.get("/api/publish-events", requireAuth, (_req, res) => {
-  res.json({ events: db.prepare("SELECT * FROM publish_events ORDER BY created_at DESC LIMIT 20").all() });
+  res.json({ events: db.prepare("SELECT * FROM publish_events ORDER BY created_at DESC LIMIT 20").all().map(safePublishEvent) });
 });
 
 app.get("/api/audit-events", requirePermission("write"), (req, res) => {
@@ -1666,12 +1783,16 @@ app.get("/api/publish/preview", requirePermission("publish"), (_req, res) => {
   }
   if (!settings.supportEmail && !settings.supportLink) warnings.push({ entityType: "settings", message: "Support/contact info is missing." });
   if (!settings.brandName) warnings.push({ entityType: "settings", message: "Brand/store name is missing." });
-  const recentPublishEvents = db.prepare("SELECT * FROM publish_events ORDER BY created_at DESC LIMIT 5").all();
+  const recentPublishEvents = db.prepare("SELECT * FROM publish_events ORDER BY created_at DESC LIMIT 5").all().map(safePublishEvent);
   res.json({
     counts: { products: publishedProducts.length, allProducts: products.length, downloads: downloads.length, softwareBundles: bundles.length, productVisibility: visibility },
     visibilityMessages,
     warnings,
     recentPublishEvents,
+    deployProvider: config.deployProvider,
+    cloudflarePagesProject: config.cloudflarePagesProject,
+    cloudflarePagesBranch: config.cloudflarePagesBranch,
+    publishInProgress: publishStatus(),
     publicPreviewUrl: publicPreviewUrl("/"),
     hasPublishedSite: hasPublishedSite(),
     ready: warnings.length === 0
@@ -2018,8 +2139,11 @@ app.post("/api/sample-data", requireAdmin, (req, res) => {
 app.use("/uploads", express.static(config.uploadsDir, {
   index: false,
   dotfiles: "deny",
-  setHeaders(res) {
+  setHeaders(res, filePath) {
     res.setHeader("X-Content-Type-Options", "nosniff");
+    if (path.extname(filePath).toLowerCase() === ".svg") {
+      res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'");
+    }
   }
 }));
 const previewStatic = express.static(config.generatedSiteDir, {
@@ -2042,19 +2166,47 @@ app.get("*", (req, res) => {
 });
 
 app.use((error, _req, res, _next) => {
-  const uploadError = error.name === "MulterError" || /^Unsupported file type:/i.test(error.message || "");
-  const status = error.name === "ZodError" || uploadError ? 400 : 500;
-  res.status(status).json({
-    error: status === 500 ? "Server error" : "Invalid request",
-    details: error.name === "ZodError" ? error.errors : error.message
-  });
+  const uploadError = error.name === "MulterError" || /^(?:Unsupported file type|File content does not match its extension):/i.test(error.message || "");
+  const requestedStatus = Number(error.statusCode);
+  const status = error.name === "ZodError" || uploadError ? 400 : (requestedStatus >= 400 && requestedStatus <= 599 ? requestedStatus : 500);
+  if (status >= 500) console.error(redactSecrets(error.stack || error.message || error, [config.cloudflareApiToken]));
+  const payload = { error: error.publicMessage || (status === 500 ? "Server error" : "Invalid request") };
+  if (error.name === "ZodError") payload.details = error.errors;
+  else if (status < 500 && !error.publicMessage) payload.details = error.message;
+  res.status(status).json(payload);
 });
 
 cleanupExpiredSessions();
-setInterval(cleanupExpiredSessions, 60 * 60 * 1000).unref();
+const sessionCleanupTimer = setInterval(cleanupExpiredSessions, 60 * 60 * 1000);
+sessionCleanupTimer.unref();
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   fs.mkdirSync(config.generatedSiteDir, { recursive: true });
   console.log(`Kairix Express Page Builder ${appVersion()} starting in ${process.env.NODE_ENV || "development"} on Node ${process.version}`);
   console.log(`Kairix Express Page Builder admin listening on http://localhost:${config.port}`);
 });
+
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received; stopping new requests and cancelling any active publish.`);
+  clearInterval(sessionCleanupTimer);
+  cancelActivePublish();
+  const forceTimer = setTimeout(() => {
+    console.error("Graceful shutdown timed out; closing remaining connections.");
+    server.closeAllConnections?.();
+  }, 30_000);
+  forceTimer.unref();
+  server.close(() => {
+    clearTimeout(forceTimer);
+    try {
+      db.close();
+    } finally {
+      process.exit(0);
+    }
+  });
+}
+
+process.once("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.once("SIGINT", () => gracefulShutdown("SIGINT"));

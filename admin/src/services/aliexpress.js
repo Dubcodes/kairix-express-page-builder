@@ -1,6 +1,35 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
 
+function validatedEndpoint(value, label) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${label} must be an absolute URL`);
+  }
+  if (url.username || url.password) throw new Error(`${label} must not contain URL credentials`);
+  if (process.env.NODE_ENV === "production") {
+    const hostname = url.hostname.toLowerCase();
+    const officialHost = hostname === "aliexpress.com" || hostname.endsWith(".aliexpress.com") || hostname === "aliexpress.us" || hostname.endsWith(".aliexpress.us");
+    if (url.protocol !== "https:" || !officialHost) {
+      throw new Error(`${label} must use HTTPS on an official AliExpress hostname in production`);
+    }
+  } else if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error(`${label} must use HTTP or HTTPS`);
+  }
+  return url;
+}
+
+async function boundedFetch(url, options) {
+  try {
+    return await fetch(url, { ...options, signal: AbortSignal.timeout(15_000) });
+  } catch (error) {
+    if (error.name === "TimeoutError" || error.name === "AbortError") throw new Error("AliExpress request timed out");
+    throw new Error("AliExpress request failed");
+  }
+}
+
 export function buildAuthUrl(connection, state) {
   const authUrl = connection.auth_base_url || config.aliexpressAuthUrl;
   if (!authUrl) {
@@ -8,7 +37,7 @@ export function buildAuthUrl(connection, state) {
     error.code = "setup_required";
     throw error;
   }
-  const url = new URL(authUrl);
+  const url = validatedEndpoint(authUrl, "AliExpress auth endpoint");
   url.searchParams.set("client_id", connection.app_key || "");
   url.searchParams.set("redirect_uri", `${config.adminBaseUrl.replace(/\/$/, "")}/api/integrations/aliexpress/callback`);
   url.searchParams.set("response_type", "code");
@@ -23,7 +52,7 @@ export async function exchangeCodeForToken(connection, code) {
     error.code = "setup_required";
     throw error;
   }
-  const response = await fetch(tokenUrl, {
+  const response = await boundedFetch(validatedEndpoint(tokenUrl, "AliExpress token endpoint"), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -60,15 +89,15 @@ export async function callAliExpressApi(connection, method, params = {}) {
     throw error;
   }
   const signed = {
+    ...params,
     method,
     app_key: connection.app_key,
     timestamp: new Date().toISOString(),
     sign_method: "sha256",
-    access_token: connection.access_token || "",
-    ...params
+    access_token: connection.access_token || ""
   };
   signed.sign = signRequest(signed, connection.app_secret || "");
-  const response = await fetch(apiUrl, {
+  const response = await boundedFetch(validatedEndpoint(apiUrl, "AliExpress API endpoint"), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(signed)

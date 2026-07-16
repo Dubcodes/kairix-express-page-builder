@@ -1,4 +1,5 @@
 import path from "node:path";
+import crypto from "node:crypto";
 import fs from "fs-extra";
 
 const values = Object.fromEntries(process.argv.slice(2).map((item) => {
@@ -19,7 +20,7 @@ if (provider === "cloudflare-pages") {
   process.env.CLOUDFLARE_ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
   process.env.CLOUDFLARE_PAGES_PROJECT = "verification-project";
   process.env.CLOUDFLARE_PAGES_BRANCH = "main";
-  process.env.CLOUDFLARE_API_TOKEN = "verification-only-not-a-secret";
+  process.env.CLOUDFLARE_API_TOKEN = crypto.randomBytes(32).toString("hex");
 }
 
 const [{ config }, { buildExportData }, { runProcess }, { storageProvider }] = await Promise.all([

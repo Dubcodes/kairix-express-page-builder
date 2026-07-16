@@ -56,7 +56,7 @@ export function authMiddleware(req, _res, next) {
       users.support_access_expires_at, users.password_reset_required
     FROM sessions
     JOIN users ON users.id = sessions.user_id
-    WHERE sessions.token_hash = ? AND sessions.expires_at > datetime('now')
+    WHERE sessions.token_hash = ? AND julianday(sessions.expires_at) > julianday('now')
   `).get(hashToken(token));
   if (session) {
     const expiredSupport = session.support_access_expires_at && new Date(session.support_access_expires_at) <= new Date();

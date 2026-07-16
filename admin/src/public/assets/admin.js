@@ -1088,12 +1088,12 @@ function advancedSettingsView() {
   return `
     <section class="panel">
       <h2>Advanced Settings</h2>
-      <p class="muted">Deployment and provider settings for Portainer, local preview, and future Cloudflare support.</p>
+      <p class="muted">Deployment and provider diagnostics for Portainer, local preview, and Cloudflare Pages.</p>
       <div class="list">
         <div class="item" id="diagnosticsCard"><h3>App/server diagnostics</h3><p class="muted">Load safe version, hostname, and runtime information for support. Secrets are not included.</p><div class="summary-grid diagnostics-summary" id="diagnosticsSummary"><div><span>Current public preview URL</span><strong>${escapeHtml(previewUrl)}</strong></div><div><span>Public host mode</span><strong>Load diagnostics</strong></div></div><div class="actions"><button id="loadDiagnosticsBtn" class="secondary" type="button">Load diagnostics</button><button id="copyDiagnosticsBtn" type="button">Copy diagnostics</button></div><pre id="diagnosticsOutput" class="build-log"></pre></div>
         <div class="item"><h3>Public site base path</h3><p><code>PUBLIC_SITE_BASE_PATH</code> is currently configured by environment. Local admin preview uses <code>/preview</code>; Cloudflare root deploys should use an empty value.</p></div>
         <div class="item"><h3>Storage provider</h3><p>Local uploads are active. Cloudflare R2 is a placeholder for a later beta.</p></div>
-        <div class="item"><h3>Deploy provider</h3><p>Local static generation is active. Cloudflare Pages Direct Upload is scaffolded for a future release.</p></div>
+        <div class="item"><h3>Deploy provider</h3><p>The active provider is environment-controlled. Local mode updates the private preview; Cloudflare Pages mode publishes validated static output over outbound HTTPS.</p></div>
       </div>
       <button id="loadAuditBtn" type="button">Load audit log</button>
       <div id="auditOutput" class="list"></div>
@@ -1107,6 +1107,9 @@ function diagnosticsSummaryHtml(diagnostics = {}) {
     <div><span>Admin hostname</span><strong>${escapeHtml(diagnostics.adminHostname || "Not set")}</strong></div>
     <div><span>Public hostname</span><strong>${escapeHtml(diagnostics.publicHostname || "Not set")}</strong></div>
     <div><span>Public host mode</span><strong>${diagnostics.publicHostModeEnabled ? "Enabled" : "Disabled"}</strong></div>
+    <div><span>Deploy provider</span><strong>${escapeHtml(diagnostics.deployProvider || "local")}</strong></div>
+    <div><span>Cloudflare project/credentials</span><strong>${diagnostics.cloudflareProjectConfigured ? "Configured" : "Not configured"}</strong></div>
+    <div><span>Production safety</span><strong>${diagnostics.productionSafetyIssues?.length ? `${diagnostics.productionSafetyIssues.length} issue(s)` : "Ready"}</strong></div>
     <div><span>Active request host</span><strong>${escapeHtml(diagnostics.activeRequestHost || "Unknown")}</strong></div>
     <div><span>Current public preview URL</span><strong>${escapeHtml(previewUrl)}</strong></div>
   `;
@@ -1884,6 +1887,12 @@ async function renderPublishReview() {
   const visibility = review.counts?.productVisibility || {};
   target.innerHTML = `
     ${publishStateCard()}
+    <div class="item">
+      <h3>Publish target</h3>
+      <p>${pill(review.deployProvider === "cloudflare-pages" ? "Cloudflare production" : "Local preview", review.deployProvider === "cloudflare-pages" ? "success" : "neutral")}</p>
+      ${review.deployProvider === "cloudflare-pages" ? `<p class="muted">Project ${escapeHtml(review.cloudflarePagesProject || "not configured")} · branch ${escapeHtml(review.cloudflarePagesBranch || "main")}</p>` : `<p class="muted">Publishing updates the private server's generated-site preview only.</p>`}
+      ${review.publishInProgress ? `<p class="muted">Publish job ${escapeHtml(review.publishInProgress.jobId)} is currently running.</p>` : ""}
+    </div>
     <div class="summary-grid">
       <div class="item"><h3>${review.counts.products}</h3><p>Published Products</p></div>
       <div class="item"><h3>${review.counts.allProducts ?? review.counts.products}</h3><p>Total Products</p></div>
@@ -1950,13 +1959,24 @@ function bindTabEvents(content) {
     },
     publishBtn: async () => {
       const output = document.querySelector("#publishOutput");
+      const button = document.querySelector("#publishBtn");
+      if (button?.disabled) return;
+      if (button) button.disabled = true;
       output.innerHTML = `<p class="muted">Publishing...</p>`;
       try {
         const result = await api("/api/publish", { method: "POST", body: {} });
+        const targetLabel = result.provider === "cloudflare-pages" ? "Cloudflare production" : "Local preview";
         output.innerHTML = `
           <p class="publish-success">Published successfully.</p>
-          ${buildSummaryCard(JSON.stringify({ summary: "Static site published", rawLog: result.output || result.message || "" }), "success")}
+          <div class="build-summary">
+            <p><strong>${escapeHtml(targetLabel)}</strong></p>
+            <p>${pill("Success", "success")} ${escapeHtml(result.build?.summary || result.message || "Static site published")}</p>
+            <p class="muted">${escapeHtml(String(result.build?.fileCount || 0))} files · ${escapeHtml(String(result.build?.totalBytes || 0))} bytes · ${escapeHtml(String(result.build?.durationMs || 0))} ms build</p>
+            ${result.deploymentId ? `<p class="muted">Deployment ID: ${escapeHtml(result.deploymentId)}</p>` : ""}
+            ${linkResult(result.provider === "cloudflare-pages" ? "Public site" : "Local preview", result.publicUrl || result.deploymentUrl)}
+          </div>
         `;
+        bindCopyButtons(output);
         clearUnpublishedChanges();
         state.me = { ...(state.me || {}), hasPublishedSite: true };
         document.querySelectorAll("[data-open-publish]").forEach((notice) => notice.remove());
@@ -1965,6 +1985,8 @@ function bindTabEvents(content) {
       } catch (error) {
         output.innerHTML = `<p class="error">Publish failed.</p><p class="muted">${escapeHtml(error.message)}</p>`;
         throw error;
+      } finally {
+        if (button) button.disabled = false;
       }
     },
     loadAnalyticsBtn: async () => {
