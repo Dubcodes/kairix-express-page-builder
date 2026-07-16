@@ -10,7 +10,8 @@ services:
       PORT: 8080
       DATABASE_PATH: /app/data/kairix.sqlite
       UPLOADS_DIR: /app/uploads
-      GENERATED_SITE_DIR: /app/generated-site
+      GENERATED_SITE_DIR: /app/generated-site/current
+      PUBLIC_BUILD_TEMP_DIR: /app/generated-site/.publish-staging
       BACKUPS_DIR: /app/data/backups
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TRUST_PROXY: ${TRUST_PROXY:-false}
@@ -20,6 +21,16 @@ services:
       ADMIN_BASE_URL: ${ADMIN_BASE_URL:-http://localhost:8080}
       ADMIN_HOSTNAME: ${ADMIN_HOSTNAME:-}
       PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:-}
+      DEPLOY_PROVIDER: ${DEPLOY_PROVIDER:-local}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_PAGES_PROJECT: ${CLOUDFLARE_PAGES_PROJECT:-}
+      CLOUDFLARE_PAGES_BRANCH: ${CLOUDFLARE_PAGES_BRANCH:-main}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_DEPLOY_TIMEOUT_MS: ${CLOUDFLARE_DEPLOY_TIMEOUT_MS:-600000}
+      CLOUDFLARE_PREFLIGHT_TIMEOUT_MS: ${CLOUDFLARE_PREFLIGHT_TIMEOUT_MS:-15000}
+      PUBLISH_MAX_FILES: ${PUBLISH_MAX_FILES:-20000}
+      PUBLISH_MAX_TOTAL_MB: ${PUBLISH_MAX_TOTAL_MB:-500}
+      PUBLISH_MAX_FILE_MB: ${PUBLISH_MAX_FILE_MB:-25}
       SESSION_SECRET: ${SESSION_SECRET:-}
       ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:-}
       ALIEXPRESS_AUTH_URL: ${ALIEXPRESS_AUTH_URL:-}
@@ -31,11 +42,20 @@ services:
       - kairix-data:/app/data
       - kairix-uploads:/app/uploads
       - kairix-generated-site:/app/generated-site
+    init: true
+    stop_grace_period: 45s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1777
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5
+      start_period: 20s
 
   public-preview:
     build:
@@ -44,7 +64,7 @@ services:
     container_name: kairix-express-page-builder-preview
     restart: unless-stopped
     ports:
-      - "${PUBLIC_PREVIEW_PORT:-4321}:80"
+      - "127.0.0.1:${PUBLIC_PREVIEW_PORT:-4321}:80"
     volumes:
       - kairix-generated-site:/usr/share/nginx/html:ro
     depends_on:
