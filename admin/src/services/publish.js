@@ -1,5 +1,4 @@
 import path from "node:path";
-import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "fs-extra";
 import slugify from "slugify";
@@ -8,30 +7,11 @@ import { config } from "../config.js";
 import { db } from "../db.js";
 import { buildExportData } from "./exportData.js";
 import { storageProvider } from "../providers/storage.js";
-import { LocalDeployProvider } from "../providers/deploy.js";
-
-function run(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: config.projectRoot,
-      shell: process.platform === "win32",
-      env: process.env,
-      ...options
-    });
-    let output = "";
-    child.stdout.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      output += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve(output);
-      else reject(new Error(output || `${command} exited with code ${code}`));
-    });
-  });
-}
+import { createDeployProvider, redactSecrets } from "../providers/deploy.js";
+import { runProcess } from "./processRunner.js";
+import { isPathInside, SiteValidationError, validateGeneratedSite } from "./siteValidation.js";
+import { withPublishLock } from "./publishLock.js";
+export { cancelActivePublish, PublishInProgressError, publishStatus, withPublishLock } from "./publishLock.js";
 
 function stripAnsi(value) {
   return String(value || "").replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "");
@@ -55,13 +35,20 @@ function appVersion() {
   }
 }
 
-function assertSafeBuildDir() {
+async function assertSafeBuildRoot() {
   const buildDir = path.resolve(config.generatedSiteBuildDir);
   const projectRoot = path.resolve(config.projectRoot);
   const generatedDir = path.resolve(config.generatedSiteDir);
-  if (buildDir === projectRoot || buildDir === generatedDir || !path.relative(projectRoot, buildDir) || path.relative(projectRoot, buildDir).startsWith("..")) {
-    throw new Error("PUBLIC_BUILD_TEMP_DIR must be a safe temporary directory inside the project and separate from GENERATED_SITE_DIR.");
+  if (!isPathInside(projectRoot, generatedDir)) {
+    throw new SiteValidationError("GENERATED_SITE_DIR must be inside the application project area.");
   }
+  if (buildDir === projectRoot || buildDir === generatedDir || !isPathInside(projectRoot, buildDir) || isPathInside(generatedDir, buildDir)) {
+    throw new SiteValidationError("PUBLIC_BUILD_TEMP_DIR must be inside the project and separate from the live generated site.");
+  }
+  await fs.ensureDir(buildDir);
+  if ((await fs.lstat(buildDir)).isSymbolicLink()) throw new SiteValidationError("PUBLIC_BUILD_TEMP_DIR must not be a symlink.");
+  const [projectReal, buildReal] = await Promise.all([fs.realpath(projectRoot), fs.realpath(buildDir)]);
+  if (!isPathInside(projectReal, buildReal)) throw new SiteValidationError("PUBLIC_BUILD_TEMP_DIR resolves outside the project.");
 }
 
 async function hashFile(filePath) {
@@ -119,32 +106,206 @@ async function generateSoftwareBundleZips() {
   return generated;
 }
 
-export async function publishSite(userId = null) {
-  const deployProvider = new LocalDeployProvider();
+function recordAudit(userId, eventType, { jobId, message, startedAt, metadata = {} }) {
+  db.prepare(`
+    INSERT INTO audit_events (user_id, event_type, entity_type, message, metadata)
+    VALUES (?, ?, 'publish', ?, ?)
+  `).run(userId, eventType, message, JSON.stringify({
+    jobId,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    ...metadata
+  }));
+}
+
+function recordPublishEvent(userId, status, payload) {
+  db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)")
+    .run(status, JSON.stringify(payload), userId);
+}
+
+async function gitMetadata(runProcessImpl = runProcess) {
   try {
-    assertSafeBuildDir();
-    const generatedBundles = await generateSoftwareBundleZips();
-    const data = await buildExportData();
-    const dataPath = path.join(config.projectRoot, "site", "src", "data", "content.json");
-    const publicUploadsDir = path.join(config.projectRoot, "site", "public", "uploads");
-    await fs.ensureDir(path.dirname(dataPath));
-    await fs.writeJson(dataPath, data, { spaces: 2 });
-    await storageProvider.copyToPublic(publicUploadsDir);
-    await fs.ensureDir(config.generatedSiteBuildDir);
-    await fs.emptyDir(config.generatedSiteBuildDir);
-    const output = await run("npm", ["run", "build", "--workspace", "site"], {
-      env: {
-        ...process.env,
-        ASTRO_OUT_DIR: config.generatedSiteBuildDir
-      }
-    });
-    await fs.emptyDir(config.generatedSiteDir);
-    await fs.copy(config.generatedSiteBuildDir, config.generatedSiteDir);
-    const result = await deployProvider.deploy();
-    db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("success", JSON.stringify({ summary: summarizeBuildOutput(output), rawLog: output, appVersion: appVersion() }), userId);
-    return { ok: true, ...result, output, generatedBundles };
+    const [commit, status, subject] = await Promise.all([
+      runProcessImpl("git", ["rev-parse", "HEAD"], { cwd: config.projectRoot, timeoutMs: 5_000, maxOutputBytes: 4_096 }),
+      runProcessImpl("git", ["status", "--porcelain"], { cwd: config.projectRoot, timeoutMs: 5_000, maxOutputBytes: 32_768 }),
+      runProcessImpl("git", ["log", "-1", "--pretty=%s"], { cwd: config.projectRoot, timeoutMs: 5_000, maxOutputBytes: 4_096 })
+    ]);
+    return {
+      commit: commit.stdout.trim(),
+      dirty: Boolean(status.stdout.trim()),
+      message: subject.stdout.trim().slice(0, 100)
+    };
+  } catch {
+    return { commit: null, dirty: false, message: "Kairix static-site publish" };
+  }
+}
+
+async function promoteGeneratedSite(stagingDir) {
+  const target = path.resolve(config.generatedSiteDir);
+  const parent = path.dirname(target);
+  const backup = path.join(parent, `.kairix-previous-${crypto.randomUUID()}`);
+  await fs.ensureDir(parent);
+  if (await fs.pathExists(target)) {
+    const stat = await fs.lstat(target);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new SiteValidationError("Live generated-site path must be a real directory.");
+    await fs.rename(target, backup);
+  }
+  try {
+    await fs.rename(stagingDir, target);
   } catch (error) {
-    db.prepare("INSERT INTO publish_events (status, message, created_by) VALUES (?, ?, ?)").run("failure", JSON.stringify({ summary: "Publish failed", rawLog: String(error.message || error), appVersion: appVersion() }), userId);
+    if (await fs.pathExists(backup)) await fs.rename(backup, target);
     throw error;
   }
+  await fs.remove(backup).catch((error) => {
+    console.error(`Previous generated-site cleanup failed: ${error.message}`);
+  });
+}
+
+export async function cleanupPublishTemp() {
+  await assertSafeBuildRoot();
+  for (const entry of await fs.readdir(config.generatedSiteBuildDir, { withFileTypes: true })) {
+    if (entry.isDirectory() && entry.name.startsWith("publish-")) {
+      await fs.remove(path.join(config.generatedSiteBuildDir, entry.name));
+    }
+  }
+}
+
+export async function publishSite(userId = null, dependencies = {}) {
+  return withPublishLock(userId, async ({ jobId, startedAt, signal }) => {
+    const runProcessImpl = dependencies.runProcessImpl || runProcess;
+    const deployProvider = dependencies.deployProvider || createDeployProvider(config, dependencies.deployDependencies);
+    const buildRoot = path.resolve(config.generatedSiteBuildDir);
+    const jobDir = path.join(buildRoot, `publish-${jobId}`);
+    const outputDir = path.join(jobDir, "site");
+    const wranglerOutputPath = path.join(jobDir, "wrangler-output.ndjson");
+    let stage = "preflight";
+    let generatedBundles = [];
+    recordAudit(userId, "publish_started", { jobId, message: "Publish started", startedAt, metadata: { provider: deployProvider.name } });
+    try {
+      await assertSafeBuildRoot();
+      await deployProvider.preflight({ signal });
+      await fs.ensureDir(outputDir);
+      generatedBundles = await generateSoftwareBundleZips();
+      const data = await buildExportData();
+      const dataPath = path.join(config.projectRoot, "site", "src", "data", "content.json");
+      const publicUploadsDir = path.join(config.projectRoot, "site", "public", "uploads");
+      await fs.ensureDir(path.dirname(dataPath));
+      await fs.writeJson(dataPath, data, { spaces: 2 });
+      await storageProvider.copyToPublic(publicUploadsDir);
+
+      stage = "build";
+      const build = await runProcessImpl(process.execPath, [path.join(config.projectRoot, "site", "scripts", "astro.mjs"), "build"], {
+        cwd: config.projectRoot,
+        env: {
+          ...process.env,
+          ASTRO_OUT_DIR: outputDir,
+          PUBLIC_BASE_URL: config.publicBaseUrl,
+          PUBLIC_SITE_BASE_PATH: config.publicSiteBasePath
+        },
+        timeoutMs: config.cloudflareDeployTimeoutMs,
+        maxOutputBytes: 256 * 1024,
+        signal
+      });
+      const buildSummary = summarizeBuildOutput(`${build.stdout}\n${build.stderr}`);
+      recordAudit(userId, "publish_build_completed", {
+        jobId,
+        message: "Static-site build completed",
+        startedAt,
+        metadata: { provider: deployProvider.name, buildDurationMs: build.durationMs }
+      });
+
+      stage = "validation";
+      const validation = await validateGeneratedSite(outputDir, {
+        approvedRoot: buildRoot,
+        maxFiles: config.publishMaxFiles,
+        maxTotalBytes: config.publishMaxTotalBytes,
+        maxFileBytes: config.publishMaxFileBytes
+      });
+      const git = await gitMetadata(runProcessImpl);
+
+      stage = "deployment";
+      if (deployProvider.name === "cloudflare-pages") {
+        recordAudit(userId, "cloudflare_deployment_started", {
+          jobId,
+          message: "Cloudflare deployment started",
+          startedAt,
+          metadata: { projectName: config.cloudflarePagesProject, branch: config.cloudflarePagesBranch }
+        });
+      }
+      const deployment = await deployProvider.deploy({
+        outputDir,
+        outputFilePath: wranglerOutputPath,
+        git,
+        message: git.message || `Kairix publish ${jobId.slice(0, 8)}`,
+        signal
+      });
+      if (deployProvider.name === "cloudflare-pages") {
+        recordAudit(userId, "cloudflare_deployment_completed", {
+          jobId,
+          message: "Cloudflare deployment completed",
+          startedAt,
+          metadata: {
+            deploymentId: deployment.deploymentId,
+            deploymentUrl: deployment.deploymentUrl,
+            projectName: deployment.projectName,
+            branch: deployment.branch || config.cloudflarePagesBranch
+          }
+        });
+      }
+
+      stage = "promotion";
+      await promoteGeneratedSite(outputDir);
+      const result = {
+        ok: true,
+        ...deployment,
+        outputDir: config.generatedSiteDir,
+        jobId,
+        generatedBundles,
+        build: {
+          summary: buildSummary,
+          durationMs: build.durationMs,
+          fileCount: validation.fileCount,
+          totalBytes: validation.totalBytes
+        }
+      };
+      recordPublishEvent(userId, "success", {
+        summary: deployment.message,
+        appVersion: appVersion(),
+        jobId,
+        provider: deployment.provider,
+        mode: deployment.mode,
+        publicUrl: deployment.publicUrl,
+        deploymentId: deployment.deploymentId || null,
+        deploymentUrl: deployment.deploymentUrl || null,
+        build: result.build
+      });
+      return result;
+    } catch (error) {
+      const eventType = {
+        validation: "publish_validation_failed",
+        deployment: "publish_deployment_failed",
+        promotion: "publish_preview_promotion_failed"
+      }[stage] || "publish_failed";
+      const safeError = redactSecrets(error.message || error, [config.cloudflareApiToken]).slice(0, 4_000);
+      recordAudit(userId, eventType, {
+        jobId,
+        message: stage === "validation" ? "Generated-site validation failed" : "Publish or deployment failed",
+        startedAt,
+        metadata: { provider: deployProvider.name, stage, code: error.code || "PUBLISH_FAILED" }
+      });
+      recordPublishEvent(userId, "failure", {
+        summary: error.publicMessage || "Publish failed. Review server diagnostics.",
+        appVersion: appVersion(),
+        jobId,
+        provider: deployProvider.name,
+        stage,
+        code: error.code || "PUBLISH_FAILED"
+      });
+      console.error(`[publish ${jobId}] ${safeError}`);
+      throw error;
+    } finally {
+      await fs.remove(jobDir).catch((cleanupError) => {
+        console.error(`[publish ${jobId}] Temporary file cleanup failed: ${cleanupError.message}`);
+      });
+    }
+  }, { recordAuditImpl: dependencies.lockDependencies?.recordAuditImpl || recordAudit });
 }

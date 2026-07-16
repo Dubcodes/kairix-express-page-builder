@@ -23,6 +23,30 @@ function boolSetting(value, defaultValue = false) {
   return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
 }
 
+function safeHttpUrl(value) {
+  if (!value) return "";
+  try {
+    const url = new URL(String(value));
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function safeContactValue(type, value) {
+  const cleaned = clean(value);
+  if (["link", "marketplace"].includes(type)) return safeHttpUrl(cleaned);
+  if (type === "email") return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned) ? cleaned : "";
+  if (type === "phone") return /^\+?[0-9() .-]{5,40}$/.test(cleaned) ? cleaned : "";
+  return "";
+}
+
+function safePublicAsset(value) {
+  const asset = String(value || "");
+  if (!asset.startsWith("/uploads/") || asset.includes("..") || asset.includes("\\")) return "";
+  return /^\/uploads\/[A-Za-z0-9._/%-]+$/.test(asset) ? asset : "";
+}
+
 function imageListSetting(value) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   const raw = String(value || "").trim();
@@ -51,7 +75,7 @@ function productOptions(product, filesById) {
     .map((option) => {
       const fileId = option.fileId ? Number(option.fileId) : null;
       const legacyImage = option.image || "";
-      const resolvedImage = fileId ? fileUrl(filesById.get(fileId)) : legacyImage;
+      const resolvedImage = fileId ? fileUrl(filesById.get(fileId)) : safePublicAsset(legacyImage);
       return {
         type: clean(option.type || "Other"),
         value: clean(option.value || ""),
@@ -64,6 +88,7 @@ function productOptions(product, filesById) {
 
 function fileUrl(file) {
   if (!file) return null;
+  if (!/^[A-Za-z0-9._/-]+$/.test(file.stored_name) || file.stored_name.includes("..") || file.stored_name.startsWith("/")) return null;
   return `/uploads/${file.stored_name}`;
 }
 
@@ -102,7 +127,7 @@ export async function buildExportData() {
     .map((method) => ({
       label: clean(method.label),
       type: clean(method.type),
-      value: clean(method.value)
+      value: safeContactValue(method.type, method.value)
     }))
     .filter((method) => method.label && method.value);
 
@@ -116,7 +141,7 @@ export async function buildExportData() {
     `).all(download.id).map((version) => ({
       ...version,
       release_notes: clean(version.release_notes, true),
-      download_url: version.external_url || (version.stored_name ? `/uploads/${version.stored_name}` : null)
+      download_url: safeHttpUrl(version.external_url) || fileUrl(version)
     }));
     return {
       ...download,
@@ -151,7 +176,7 @@ export async function buildExportData() {
       ...pack,
       description: clean(pack.description),
       downloads: packDownloads,
-      bundle_url: pack.bundle_stored_name ? `/uploads/${pack.bundle_stored_name}` : "",
+      bundle_url: fileUrl(pack.bundle_stored_name ? { stored_name: pack.bundle_stored_name } : null) || "",
       bundle_size: pack.bundle_size || null,
       externalLinks: packDownloads
         .map((download) => ({ download, latest: download.latest }))
@@ -213,6 +238,7 @@ export async function buildExportData() {
       }));
 
     const productUrl = `${config.publicBaseUrl.replace(/\/$/, "")}${sitePath(`/products/${product.slug}/`)}`;
+    const marketplaceUrl = safeHttpUrl(product.marketplace_url);
     products.push({
       ...product,
       short_description: clean(product.short_description),
@@ -223,13 +249,14 @@ export async function buildExportData() {
       setupImages,
       productOptions: productOptions(product, filesById),
       optionNotes: clean(product.option_notes || ""),
+      marketplace_url: marketplaceUrl,
       supportPacks: packs,
       softwareBundles: packs,
       downloads: [...lockedDownloads, ...packDownloads.filter((download) => !lockedDownloads.some((locked) => locked.id === download.id))],
       related,
       public_url: productUrl,
       support_qr: await qrDataUrl(productUrl),
-      marketplace_qr: await qrDataUrl(product.marketplace_url)
+      marketplace_qr: await qrDataUrl(marketplaceUrl)
     });
   }
 
@@ -237,20 +264,21 @@ export async function buildExportData() {
     generatedAt: new Date().toISOString(),
     publicBaseUrl: config.publicBaseUrl,
     siteBasePath: config.publicSiteBasePath,
+    runtimeApiEnabled: config.deployProvider === "local",
     settings: {
       brandName: settings.brandName || "Kairix Support",
-      logo: settings.logo || "",
-      marketplaceUrl: settings.marketplaceUrl || "",
+      logo: safePublicAsset(settings.logo),
+      marketplaceUrl: safeHttpUrl(settings.marketplaceUrl),
       introText: clean(settings.introText || "Find product information, manuals, apps, firmware and support downloads."),
-      supportEmail: settings.supportEmail || "",
-      supportLink: settings.supportLink || "",
+      supportEmail: safeContactValue("email", settings.supportEmail),
+      supportLink: safeHttpUrl(settings.supportLink),
       contactMethods,
-      contactFormEnabled: boolSetting(settings.contactFormEnabled),
+      contactFormEnabled: config.deployProvider === "local" && boolSetting(settings.contactFormEnabled),
       theme: settings.theme || "clean-light",
       defaultMarketplaceLabel: settings.defaultMarketplaceLabel || "Buy on AliExpress",
       footerText: clean(settings.footerText || ""),
       homeHeroTitle: clean(settings.homeHeroTitle || ""),
-      homeHeroImage: settings.homeHeroImage || "",
+      homeHeroImage: safePublicAsset(settings.homeHeroImage),
       homeShowCategories: boolSetting(settings.homeShowCategories, true),
       homeShowFeaturedProducts: boolSetting(settings.homeShowFeaturedProducts, true),
       homeShowSupportCta: boolSetting(settings.homeShowSupportCta, true),
@@ -261,8 +289,8 @@ export async function buildExportData() {
       homeTextBlockEnabled: boolSetting(settings.homeTextBlockEnabled, false),
       homeTextBlockHeading: clean(settings.homeTextBlockHeading || ""),
       homeTextBlockText: clean(settings.homeTextBlockText || "", true),
-      homeTextBlockImage: homeTextBlockImages[0] || "",
-      homeTextBlockImages
+      homeTextBlockImage: safePublicAsset(homeTextBlockImages[0]),
+      homeTextBlockImages: homeTextBlockImages.map(safePublicAsset).filter(Boolean)
     },
     categories: categories.map((category) => ({
       ...category,

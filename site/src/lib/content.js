@@ -73,6 +73,7 @@ export function downloadsByType() {
 }
 
 export function trackScript(eventType, payload = {}) {
+  if (!content.runtimeApiEnabled) return "";
   return `
     window.KAIRIX_TRACK = window.KAIRIX_TRACK || function(type, data) {
       fetch('/api/track', {

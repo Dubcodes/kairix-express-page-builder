@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const root = path.resolve("generated-site");
+const root = path.resolve(process.env.PUBLIC_SCAN_ROOT || "generated-site");
 const textExtensions = new Set([".html", ".js", ".css", ".json", ".xml", ".txt", ".svg"]);
 const checks = [
   { label: "adminBaseUrl", pattern: /adminBaseUrl/ },
@@ -19,8 +19,16 @@ const checks = [
   { label: "SESSION_SECRET", pattern: /SESSION_SECRET/ },
   { label: "ENCRYPTION_SECRET", pattern: /ENCRYPTION_SECRET/ },
   { label: "ALIEXPRESS secret/env name", pattern: /ALIEXPRESS_[A-Z_]+/ },
+  { label: "Cloudflare API token env name", pattern: /CLOUDFLARE_API_TOKEN/ },
   { label: "obvious env secret name", pattern: /\b(?:DATABASE_PATH|COOKIE_SECURE|TRUST_PROXY|ADMIN_BASE_URL|TOKEN_SECRET|API_SECRET|PRIVATE_KEY)\b/ }
 ];
+
+if (process.env.PUBLIC_SCAN_STATIC_ONLY === "true") {
+  checks.push(
+    { label: "private analytics API dependency", pattern: /\/api\/track\b/ },
+    { label: "private contact API dependency", pattern: /\/api\/contact-submissions\b/ }
+  );
+}
 
 function* walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

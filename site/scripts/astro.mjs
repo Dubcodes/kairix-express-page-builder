@@ -1,24 +1,23 @@
 import { spawn } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
 
 process.env.ASTRO_TELEMETRY_DISABLED = "1";
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const siteDir = path.resolve(scriptDir, "..");
-const binName = process.platform === "win32" ? "astro.cmd" : "astro";
-const candidates = [
-  path.resolve(siteDir, "node_modules", ".bin", binName),
-  path.resolve(siteDir, "..", "node_modules", ".bin", binName)
-];
-const bin = candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
+const require = createRequire(import.meta.url);
+const siteDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const astroPackagePath = require.resolve("astro/package.json");
+const astroPackage = JSON.parse(fs.readFileSync(astroPackagePath, "utf8"));
+const astroCliPath = path.resolve(path.dirname(astroPackagePath), astroPackage.bin.astro);
 
-const child = spawn(bin, process.argv.slice(2), {
+const child = spawn(process.execPath, [astroCliPath, ...process.argv.slice(2)], {
   cwd: siteDir,
   stdio: "inherit",
   env: process.env,
-  shell: process.platform === "win32"
+  shell: false,
+  windowsHide: true
 });
 
 child.on("exit", (code, signal) => {

@@ -36,7 +36,7 @@ const hrefFor = (method) => method.type === "email"
         )}
       </div>
     </section>
-    {s.contactFormEnabled && (
+    {content.runtimeApiEnabled && s.contactFormEnabled && (
       <section class="section inner">
         <h2>Contact support</h2>
         <p class="muted">For order or payment issues, use your marketplace order page. For setup, downloads, manuals or firmware help, send a message here.</p>
@@ -58,7 +58,7 @@ const hrefFor = (method) => method.type === "email"
     )}
   </main>
   <script is:inline set:html={trackScript("page_view")} />
-  <script is:inline>
+  {content.runtimeApiEnabled && <script is:inline>
     var contactForm = document.querySelector("#contactForm");
     if (contactForm) {
       contactForm.addEventListener("submit", function(event) {
@@ -80,5 +80,5 @@ const hrefFor = (method) => method.type === "email"
         });
       });
     }
-  </script>
+  </script>}
 </PublicLayout>
