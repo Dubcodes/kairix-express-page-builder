@@ -37,7 +37,7 @@ Audit date: 2026-07-17. Scope: authentication, sessions, CSRF, settings/content 
 - Credential encryption/redaction: AliExpress secrets/tokens use AES-256-GCM under `ENCRYPTION_SECRET`; browser responses expose only boolean presence. Cloudflare tokens are never browser settings, CLI arguments, audit fields, or structured results.
 - Backup exposure/integrity: backup routes are authenticated Admin-only, archives are outside static/upload roots, online snapshots include integrity metadata, and public validation rejects backups/databases.
 - Cloudflare isolation: Pages receives only the validated static tree. No database, server code, source map, runtime form, local analytics endpoint, or inbound home-server dependency is included in Cloudflare mode.
-- Dependency state: `npm audit --omit=dev` and the full runtime audit are part of verification; Wrangler is exact-pinned in the lockfile.
+- Dependency state: `npm audit --omit=dev` and the full runtime audit are part of verification; Wrangler is exact-pinned in the lockfile. The 2026-07-23 recheck updated Astro to 7.1.3, SVGO to 4.0.2, body-parser to 1.20.6, and Wrangler to 4.113.0.
 
 ## Reliability behavior
 
@@ -54,6 +54,7 @@ Audit date: 2026-07-17. Scope: authentication, sessions, CSRF, settings/content 
 
 | Severity | Component | Evidence/recommendation | Reason not fixed here |
 | --- | --- | --- | --- |
+| High | Wrangler transitive Sharp advisory | As of 2026-07-23, both full and production `npm audit` report three linked high findings through `wrangler@4.113.0 -> miniflare@4.20260721.0 -> sharp@0.34.5`. The current Wrangler/Miniflare releases pin that Sharp version. Monitor for an upstream release, update the exact Wrangler pin promptly, and rerun the Linux staging publish. Do not use `npm audit fix --force`, which proposes a large Wrangler downgrade. The affected Miniflare image-processing path is not used by `wrangler pages deploy`, but the package is present in the runtime image. | Overriding Miniflare's exact Sharp dependency or downgrading Wrangler would create an unverified runtime combination. No package-author-supported patched chain was available during this review. |
 | Medium | Data restore | There is no restore endpoint or operator workflow; only create/inspect/download exists. Implement an offline, Admin-only restore command with pre-restore backup, manifest/hash/schema validation, database close/reopen, rollback, and explicit confirmation. | Adding a destructive live restore without maintenance-mode orchestration would reduce safety and exceeds the Pages publishing change. |
 | Medium | Log/data retention | `audit_events`, `analytics_events`, and contact submissions can grow indefinitely. Add configurable retention/export and scheduled pruning with documented compliance requirements. | Retention policy is a product/operator decision; silent deletion would be unsafe. |
 | Medium | Admin CSP | Helmet security headers are active, but a strict global CSP is disabled because invite/reset pages still contain inline scripts and preview pages intentionally contain inline static scripts. Move inline admin scripts to versioned assets, then apply route-specific CSPs. | Requires a separate UI asset refactor and careful preview compatibility testing. |
