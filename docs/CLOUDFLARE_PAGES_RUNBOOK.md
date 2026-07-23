@@ -1,5 +1,7 @@
 # Cloudflare Pages publishing runbook
 
+For the Git repository, Portainer stack, persistent-volume, and first-deployment procedure, start with [PORTAINER_GIT_STACK_RUNBOOK.md](PORTAINER_GIT_STACK_RUNBOOK.md). This document covers the Cloudflare-specific publishing stage.
+
 ## Architecture
 
 The Page Manager, SQLite database, uploads volume, backups, and local preview stay on the private home server. A publish builds a complete static site in a unique staging directory, validates it, and makes an outbound HTTPS Direct Upload to Cloudflare Pages. Public visitors use Cloudflare Pages only. They do not connect to the Page Manager, its preview route, the home network, or a Cloudflare Tunnel to the private server.
@@ -44,7 +46,7 @@ Set these values on the `admin` service or Portainer stack. Values below are des
 | `ADMIN_BASE_URL` | `https://<private-admin-hostname>` |
 | `ADMIN_HOSTNAME` | `<private-admin-hostname>` when host guarding is wanted |
 | `PUBLIC_HOSTNAME` | empty; Pages must not route public traffic to this server |
-| `TRUST_PROXY` | `true` when the private admin is behind an HTTPS reverse proxy or Tunnel |
+| `TRUST_PROXY` | `true` only when the private admin is behind a trusted LAN HTTPS reverse proxy |
 | `COOKIE_SECURE` | `true` for HTTPS admin access |
 | `SESSION_SECRET` | `<different-random-value-at-least-32-characters>` |
 | `ENCRYPTION_SECRET` | `<different-random-value-at-least-32-characters>` |
@@ -55,7 +57,7 @@ Set these values on the `admin` service or Portainer stack. Values below are des
 
 Compose supplies `GENERATED_SITE_DIR=/app/generated-site/current` and `PUBLIC_BUILD_TEMP_DIR=/app/generated-site/.publish-staging`. Both are on the same volume so the validated local preview can be promoted by directory rename. Do not point either path outside `/app` or at a symlink.
 
-The `public-preview` port is bound to `127.0.0.1` by Compose. Keep it that way. It is an operator preview, not the production website.
+The `public-preview` port is bound to `PREVIEW_BIND_IP`, which defaults to `127.0.0.1`. Keep the default unless a LAN-only standalone preview is specifically required. It is an operator preview, not the production website.
 
 ## 5. Test local publishing first
 

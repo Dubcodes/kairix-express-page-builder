@@ -97,7 +97,7 @@ This project is an MVP suitable for a stable client demo, not an enterprise-grad
 
 - Use HTTPS before sharing admin access.
 - For local LAN testing use `COOKIE_SECURE=false` and `TRUST_PROXY=false`.
-- For Cloudflare Tunnel or another HTTPS reverse proxy use `COOKIE_SECURE=true` and `TRUST_PROXY=true`.
+- For a private LAN HTTPS reverse proxy use `COOKIE_SECURE=true` and `TRUST_PROXY=true`.
 - Set real, different `SESSION_SECRET` and `ENCRYPTION_SECRET` values.
 - Keep `ENABLE_SAMPLE_DATA_TOOLS=false` before sharing with clients.
 - Publish before sharing `/preview/`; the preview shows the last successfully published customer site.
@@ -135,8 +135,10 @@ The compose stack runs the Page Manager admin/backend plus an optional nginx `pu
 
 Ports:
 
-- Page Manager admin/backend: `${ADMIN_PORT:-8080}` -> container `8080`
-- Static preview: `127.0.0.1:${PUBLIC_PREVIEW_PORT:-4321}` -> container `80`
+- Page Manager admin/backend: `${ADMIN_BIND_IP:-127.0.0.1}:${ADMIN_PORT:-8080}` -> container `8080`
+- Static preview: `${PREVIEW_BIND_IP:-127.0.0.1}:${PUBLIC_PREVIEW_PORT:-4321}` -> container `80`
+
+Both ports default to loopback. In Portainer, set `ADMIN_BIND_IP` to the Linux server's LAN address to make the Page Manager reachable from trusted LAN clients. Keep `PREVIEW_BIND_IP=127.0.0.1` unless a separate LAN-only preview is deliberately needed. Do not port-forward either service.
 
 Volumes:
 
@@ -151,9 +153,9 @@ Local mode (`DEPLOY_PROVIDER=local`) updates the private generated-site preview.
 
 Cloudflare mode (`DEPLOY_PROVIDER=cloudflare-pages`) builds and validates a root static site, performs a non-interactive existing-project preflight, deploys with the pinned installed Wrangler CLI, and then atomically updates the local preview. Set `PUBLIC_SITE_BASE_PATH=` and leave `PUBLIC_HOSTNAME=` empty. Public visitors must use Cloudflare Pages; do not create a public Tunnel hostname to the Page Manager or preview.
 
-The private Page Manager may still use an authenticated Cloudflare Tunnel or another HTTPS reverse proxy. Protect it with access controls and set `TRUST_PROXY=true`, `COOKIE_SECURE=true`, and the final HTTPS `ADMIN_BASE_URL`. Production secrets must be different random values of at least 32 characters.
+This deployment keeps the Page Manager LAN-only and does not require an inbound Cloudflare Tunnel. If a private LAN HTTPS reverse proxy is used, protect it with access controls and set `TRUST_PROXY=true`, `COOKIE_SECURE=true`, and the final HTTPS `ADMIN_BASE_URL`. Production secrets must be different random values of at least 32 characters.
 
-The exact project/token/Portainer setup, diagnostics, rollback, rotation, emergency-disable steps, and checklist are in [docs/CLOUDFLARE_PAGES_RUNBOOK.md](docs/CLOUDFLARE_PAGES_RUNBOOK.md). Security/reliability findings and remaining risks are in [docs/SECURITY_RELIABILITY_AUDIT.md](docs/SECURITY_RELIABILITY_AUDIT.md).
+The Git-to-Portainer deployment and staged rollout are in [docs/PORTAINER_GIT_STACK_RUNBOOK.md](docs/PORTAINER_GIT_STACK_RUNBOOK.md). The Cloudflare project/token setup, diagnostics, rollback, rotation, emergency-disable steps, and checklist are in [docs/CLOUDFLARE_PAGES_RUNBOOK.md](docs/CLOUDFLARE_PAGES_RUNBOOK.md). Security/reliability findings and remaining risks are in [docs/SECURITY_RELIABILITY_AUDIT.md](docs/SECURITY_RELIABILITY_AUDIT.md).
 
 Do not expose Portainer publicly. Keep `ENABLE_SAMPLE_DATA_TOOLS=false` in production. For a clean demo rebuild, create an in-app backup, use a separate stack name/volumes, and never edit SQLite by hand.
 

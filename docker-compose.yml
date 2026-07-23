@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: kairix-express-page-builder-admin
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -16,8 +15,10 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       ENABLE_SAMPLE_DATA_TOOLS: ${ENABLE_SAMPLE_DATA_TOOLS:-false}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:4321}
-      PUBLIC_SITE_BASE_PATH: ${PUBLIC_SITE_BASE_PATH-/preview}
+      # Set explicitly in Portainer: /preview for built-in local preview, empty for Pages root.
+      PUBLIC_SITE_BASE_PATH: ${PUBLIC_SITE_BASE_PATH:-}
       ADMIN_BASE_URL: ${ADMIN_BASE_URL:-http://localhost:8080}
       ADMIN_HOSTNAME: ${ADMIN_HOSTNAME:-}
       PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:-}
@@ -37,7 +38,7 @@ services:
       ALIEXPRESS_TOKEN_URL: ${ALIEXPRESS_TOKEN_URL:-}
       ALIEXPRESS_API_URL: ${ALIEXPRESS_API_URL:-}
     ports:
-      - "${ADMIN_PORT:-8080}:8080"
+      - "${ADMIN_BIND_IP:-127.0.0.1}:${ADMIN_PORT:-8080}:8080"
     volumes:
       - kairix-data:/app/data
       - kairix-uploads:/app/uploads
@@ -61,10 +62,9 @@ services:
     build:
       context: .
       dockerfile: docker/nginx-preview.Dockerfile
-    container_name: kairix-express-page-builder-preview
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${PUBLIC_PREVIEW_PORT:-4321}:80"
+      - "${PREVIEW_BIND_IP:-127.0.0.1}:${PUBLIC_PREVIEW_PORT:-4321}:80"
     volumes:
       - kairix-generated-site:/usr/share/nginx/html:ro
     depends_on:
