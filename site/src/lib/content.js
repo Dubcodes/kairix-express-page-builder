@@ -1,19 +1,6 @@
-import { sampleContent } from "../data/sampleContent.js";
-import fs from "node:fs";
-import path from "node:path";
+import { loadPublicContent } from "./contentLoader.js";
 
-let exportedContent = null;
-
-try {
-  const contentPath = path.resolve(process.cwd(), "src", "data", "content.json");
-  exportedContent = fs.existsSync(contentPath)
-    ? JSON.parse(fs.readFileSync(contentPath, "utf8"))
-    : sampleContent;
-} catch {
-  exportedContent = sampleContent;
-}
-
-export const content = exportedContent;
+export const content = loadPublicContent();
 
 function cleanBasePath() {
   const configuredBase = content.siteBasePath === undefined || content.siteBasePath === null

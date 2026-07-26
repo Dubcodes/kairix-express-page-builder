@@ -14,13 +14,26 @@ function linkAttributes(tag) {
   );
 }
 
-export async function verifyPublicFavicon(outputRoot, basePath = "") {
-  const root = path.resolve(outputRoot);
-  const faviconPath = path.join(root, "favicon.svg");
-  if (!await fs.pathExists(faviconPath) || !(await fs.stat(faviconPath)).isFile()) {
-    throw new Error(`Generated public favicon is missing: ${faviconPath}`);
+function normalizedAssetPath(value) {
+  const asset = String(value || "").trim();
+  if (!asset) return "";
+  if (!asset.startsWith("/") || asset.includes("..") || asset.includes("\\")) {
+    throw new Error(`Expected favicon asset must be a safe root-relative path: ${asset}`);
   }
-  const expectedHref = `${normalizedBasePath(basePath)}/favicon.svg`;
+  return asset;
+}
+
+export async function verifyPublicFavicon(outputRoot, basePath = "", expectedAsset = "") {
+  const root = path.resolve(outputRoot);
+  const asset = normalizedAssetPath(expectedAsset);
+  const faviconPath = asset ? path.join(root, ...asset.slice(1).split("/")) : null;
+  if (faviconPath && (!await fs.pathExists(faviconPath) || !(await fs.stat(faviconPath)).isFile())) {
+    throw new Error(`Generated customer favicon is missing: ${faviconPath}`);
+  }
+  if (!asset && await fs.pathExists(path.join(root, "favicon.svg"))) {
+    throw new Error("Generated output contains the retired generic public favicon.");
+  }
+  const expectedHref = asset ? `${normalizedBasePath(basePath)}${asset}` : "";
   const htmlFiles = [];
   const pending = [root];
   while (pending.length) {
@@ -37,16 +50,21 @@ export async function verifyPublicFavicon(outputRoot, basePath = "") {
     const iconLinks = [...html.matchAll(/<link\b[^>]*>/gi)]
       .map((match) => linkAttributes(match[0]))
       .filter((attributes) => String(attributes.rel || "").split(/\s+/).includes("icon"));
-    if (!iconLinks.some((attributes) => attributes.href === expectedHref)) {
+    if (asset && !iconLinks.some((attributes) => attributes.href === expectedHref)) {
       throw new Error(`Generated page has no favicon link to ${expectedHref}: ${path.relative(root, htmlFile)}`);
     }
+    if (!asset && iconLinks.length) {
+      throw new Error(`Generated page unexpectedly contains a favicon link: ${path.relative(root, htmlFile)}`);
+    }
   }
-  return { faviconPath, href: expectedHref, pageCount: htmlFiles.length };
+  return { faviconPath, href: expectedHref, pageCount: htmlFiles.length, configured: Boolean(asset) };
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
 if (invokedPath === fileURLToPath(import.meta.url)) {
-  const [root = "generated-site", basePath = "/preview"] = process.argv.slice(2);
-  const result = await verifyPublicFavicon(root, basePath);
-  console.log(`Public favicon check passed for ${result.pageCount} page(s) at ${result.href}.`);
+  const [root = "generated-site", basePath = "/preview", expectedAsset = ""] = process.argv.slice(2);
+  const result = await verifyPublicFavicon(root, basePath, expectedAsset);
+  console.log(result.configured
+    ? `Customer favicon check passed for ${result.pageCount} page(s) at ${result.href}.`
+    : `No-public-favicon check passed for ${result.pageCount} page(s).`);
 }

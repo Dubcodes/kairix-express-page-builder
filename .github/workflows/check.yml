@@ -30,6 +30,8 @@ jobs:
           node --check admin/src/services/publish.js
           node --check admin/src/services/exportData.js
           node --check admin/src/public/assets/admin.js
+          node --check site/src/lib/contentLoader.js
+          node --check scripts/check-live-content-build.mjs
 
       - name: Build and check
         run: npm run check

@@ -19,35 +19,42 @@ test("publish link presentation omits invitation-only wording", () => {
   }).includes(invitationLinkNote), true);
 });
 
-test("admin and public default favicons use the same Kairix asset", async () => {
+test("Kairix favicon remains admin-only", async () => {
   const adminFavicon = path.resolve("admin/src/public/assets/favicon.svg");
   const publicFavicon = path.resolve("site/public/favicon.svg");
-  assert.equal(await fs.readFile(publicFavicon, "utf8"), await fs.readFile(adminFavicon, "utf8"));
+  assert.equal((await fs.readFile(adminFavicon, "utf8")).includes("<svg"), true);
+  assert.equal(await fs.pathExists(publicFavicon), false);
 });
 
-test("favicon verifier checks every generated page for local and root deployments", async () => {
+test("favicon verifier checks customer and absent favicon policies on every page", async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "kairix-favicon-test-"));
   try {
-    await fs.outputFile(path.join(temp, "favicon.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+    await fs.outputFile(path.join(temp, "uploads", "customer", "banana.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
     for (const relative of ["index.html", "products/demo/index.html"]) {
       await fs.outputFile(
         path.join(temp, relative),
-        "<!doctype html><html><head><link rel=\"icon\" href=\"/preview/favicon.svg\"></head></html>"
+        "<!doctype html><html><head><link rel=\"icon\" href=\"/preview/uploads/customer/banana.svg\"></head></html>"
       );
     }
-    const local = await verifyPublicFavicon(temp, "/preview/");
+    const local = await verifyPublicFavicon(temp, "/preview/", "/uploads/customer/banana.svg");
     assert.equal(local.pageCount, 2);
-    assert.equal(local.href, "/preview/favicon.svg");
+    assert.equal(local.href, "/preview/uploads/customer/banana.svg");
 
     for (const relative of ["index.html", "products/demo/index.html"]) {
       await fs.outputFile(
         path.join(temp, relative),
-        "<!doctype html><html><head><link rel=\"icon\" href=\"/favicon.svg\"></head></html>"
+        "<!doctype html><html><head><link rel=\"icon\" href=\"/uploads/customer/banana.svg\"></head></html>"
       );
     }
-    const cloudflare = await verifyPublicFavicon(temp, "");
+    const cloudflare = await verifyPublicFavicon(temp, "", "/uploads/customer/banana.svg");
     assert.equal(cloudflare.pageCount, 2);
-    assert.equal(cloudflare.href, "/favicon.svg");
+    assert.equal(cloudflare.href, "/uploads/customer/banana.svg");
+
+    for (const relative of ["index.html", "products/demo/index.html"]) {
+      await fs.outputFile(path.join(temp, relative), "<!doctype html><html><head></head></html>");
+    }
+    const noFavicon = await verifyPublicFavicon(temp, "", "");
+    assert.equal(noFavicon.configured, false);
   } finally {
     await fs.remove(temp);
   }

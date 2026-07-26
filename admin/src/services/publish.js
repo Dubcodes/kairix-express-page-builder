@@ -27,6 +27,16 @@ function summarizeBuildOutput(output) {
   return parts.join(" - ");
 }
 
+function safeIdentityLabel(value, fallback = "(not set)") {
+  const cleaned = stripAnsi(value)
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/["\\]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+  return cleaned || fallback;
+}
+
 function appVersion() {
   try {
     const packageJson = JSON.parse(fs.readFileSync(path.join(config.projectRoot, "package.json"), "utf8"));
@@ -188,9 +198,10 @@ export async function publishSite(userId = null, dependencies = {}) {
       stage = "export";
       generatedBundles = await generateSoftwareBundleZips();
       const data = await buildExportData();
-      const dataPath = path.join(config.projectRoot, "site", "src", "data", "content.json");
+      const inputDir = path.join(jobDir, "input");
+      const dataPath = path.join(inputDir, "content.json");
       const publicUploadsDir = path.join(config.projectRoot, "site", "public", "uploads");
-      await fs.ensureDir(path.dirname(dataPath));
+      await fs.ensureDir(inputDir);
       await fs.writeJson(dataPath, data, { spaces: 2 });
       const managedFiles = db.prepare("SELECT id, stored_name FROM files ORDER BY id").all();
       const uploadExport = await storageProvider.copyToPublic(publicUploadsDir, managedFiles);
@@ -209,6 +220,13 @@ export async function publishSite(userId = null, dependencies = {}) {
           + `${uploadExport.unreadableDirectories} unreadable director${uploadExport.unreadableDirectories === 1 ? "y" : "ies"}.`
         );
       }
+      console.info(
+        `[publish ${jobId}] exported site "${safeIdentityLabel(data.settings?.brandName)}" `
+        + `(hero "${safeIdentityLabel(data.settings?.homeHeroTitle, "uses site name")}"): `
+        + `${data.products.length} product(s), ${data.categories.length} categor${data.categories.length === 1 ? "y" : "ies"}, `
+        + `${data.downloads.length} download(s), ${data.softwareBundles.length} bundle(s), `
+        + `customer favicon ${data.settings?.favicon ? "configured" : "not configured"}, database content.`
+      );
 
       stage = "build";
       const build = await runProcessImpl(process.execPath, [path.join(config.projectRoot, "site", "scripts", "astro.mjs"), "build"], {
@@ -217,6 +235,9 @@ export async function publishSite(userId = null, dependencies = {}) {
           ...process.env,
           ASTRO_WORK_DIR: jobDir,
           ASTRO_OUT_DIR: outputDir,
+          KAIRIX_CONTENT_PATH: dataPath,
+          KAIRIX_CONTENT_ROOT: jobDir,
+          KAIRIX_USE_SAMPLE_CONTENT: "false",
           PUBLIC_BASE_URL: config.publicBaseUrl,
           PUBLIC_SITE_BASE_PATH: config.publicSiteBasePath
         },

@@ -141,6 +141,13 @@ function imageFiles() {
   return state.files.filter(isImageFile);
 }
 
+function faviconFiles() {
+  return state.files.filter((file) => {
+    const name = String(file.originalName || file.original_name || file.url || "").toLowerCase();
+    return /\.(svg|png|ico|jpe?g|gif|webp)$/i.test(name);
+  });
+}
+
 function normalizeProductState(productOrState = "") {
   const value = typeof productOrState === "object"
     ? String(productOrState.publish_state || productOrState.status || "").toLowerCase()
@@ -296,6 +303,20 @@ function imageSettingMultiPicker(name, value = "") {
   });
 }
 
+function faviconSettingPicker(fileId = "") {
+  const selectedId = Number(fileId || 0);
+  const selectedFile = fileById(selectedId);
+  return picker("faviconFileId", faviconFiles(), selectedId ? [selectedId] : [], "images", {
+    single: true,
+    hiddenName: "faviconFileId",
+    hiddenValue: selectedId ? String(selectedId) : "",
+    hiddenLabel: selectedFile?.originalName || selectedFile?.original_name || "",
+    searchPlaceholder: "Search browser icons (SVG, PNG, ICO, JPG, WebP, GIF)",
+    upload: true,
+    uploadImageOnly: true
+  });
+}
+
 function formatBytes(size) {
   const bytes = Number(size || 0);
   if (!bytes) return "0 KB";
@@ -306,7 +327,7 @@ function formatBytes(size) {
 function isImageFile(file) {
   const mime = String(file.mimeType || file.mime_type || "").toLowerCase();
   const name = String(file.originalName || file.original_name || file.name || file.url || "").toLowerCase();
-  return mime.startsWith("image/") || /\.(svg|png|jpe?g|webp|gif)$/i.test(name);
+  return mime.startsWith("image/") || /\.(svg|png|ico|jpe?g|webp|gif)$/i.test(name);
 }
 
 function mediaKind(file) {
@@ -462,7 +483,7 @@ function picker(name, rows, selected = [], kind = "items", options = {}) {
       <div class="picker-toolbar">
         <input data-picker-search placeholder="${escapeHtml(searchPlaceholder)}" aria-label="${escapeHtml(searchPlaceholder)}">
         <span class="muted picker-status" data-picker-count>${escapeHtml(selectedText)}</span>
-        ${options.upload ? `<label class="picker-upload-button secondary">Upload<input type="file" multiple data-picker-upload ${options.uploadImageOnly ? `accept=".svg,.png,.jpg,.jpeg,.webp,.gif,image/svg+xml,image/png,image/jpeg,image/webp,image/gif"` : ""}></label>` : ""}
+        ${options.upload ? `<label class="picker-upload-button secondary">Upload<input type="file" multiple data-picker-upload ${options.uploadImageOnly ? `accept=".svg,.png,.ico,.jpg,.jpeg,.webp,.gif,image/svg+xml,image/png,image/x-icon,image/vnd.microsoft.icon,image/jpeg,image/webp,image/gif"` : ""}></label>` : ""}
         ${single ? "" : `<button class="secondary" type="button" data-picker-select-visible>Select all visible</button>`}
         <button class="secondary" type="button" data-picker-clear>Clear selected</button>
       </div>
@@ -639,28 +660,23 @@ function contactTypeOptions(selected = "link") {
 }
 
 function pageManagerTitle(settings = {}) {
-  const brandName = String(settings.brandName || "").trim() || "Kairix";
-  return `${brandName} Page Manager`;
+  return "Kairix Page Manager";
 }
 
 function updateAdminTitle(settings = {}) {
   const title = pageManagerTitle(settings);
   if (adminTitle) adminTitle.textContent = title;
   if (adminLogo) {
-    adminLogo.src = settings.logo || "";
-    adminLogo.classList.toggle("hidden", !settings.logo);
+    adminLogo.src = "";
+    adminLogo.classList.add("hidden");
   }
   let favicon = document.querySelector("link[rel='icon']");
-  if (settings.logo) {
-    if (!favicon) {
-      favicon = document.createElement("link");
-      favicon.rel = "icon";
-      document.head.append(favicon);
-    }
-    favicon.href = settings.logo;
-  } else if (favicon) {
-    favicon.href = "/assets/favicon.svg";
+  if (!favicon) {
+    favicon = document.createElement("link");
+    favicon.rel = "icon";
+    document.head.append(favicon);
   }
+  favicon.href = "/assets/favicon.svg";
   document.title = title;
 }
 
@@ -986,15 +1002,30 @@ function brandingSettingsView() {
   return `
     <section class="panel">
       <div class="section-heading">
-        <h2>Store settings</h2>
+        <h2>Public site branding</h2>
       </div>
+      <p class="muted">These settings control the customer-facing website only. The Kairix Page Manager name and admin favicon remain unchanged.</p>
       <form id="settingsForm" class="form-grid" data-settings-area="Settings/branding">
         <div class="wide editor-actionbar">
-          <div><strong>Branding settings</strong><span class="muted" data-form-dirty-state>Saved changes still need publishing before customers see them.</span></div>
-          <div class="actions"><button type="submit">Save settings</button></div>
+          <div><strong>Customer branding</strong><span class="muted" data-form-dirty-state>Saved changes still need publishing before customers see them.</span></div>
+          <div class="actions"><button type="submit">Save branding</button></div>
         </div>
-        <label>Store/brand name<input name="brandName" value="${escapeHtml(s.brandName || "")}"></label>
-        <label>Logo<input name="logo" type="file" accept="image/*"></label>
+        <label>Public site name<input name="brandName" value="${escapeHtml(s.brandName || "")}"></label>
+        <p class="field-help">Shown in the public navigation header and browser page titles. The hero title below may use the same or different wording.</p>
+        <label>Header logo<input name="logo" type="file" accept=".svg,.png,.jpg,.jpeg,.webp,.gif,image/*"></label>
+        <p class="field-help">Upload a customer logo for the public header. It does not replace the Kairix Page Manager identity.</p>
+        <div class="wide">
+          <strong>Browser favicon</strong>
+          <p class="field-help">Select or upload a managed SVG, PNG, ICO, JPG, WebP, or GIF. If none is selected, a compatible header logo is used; otherwise no public favicon is emitted.</p>
+          ${faviconSettingPicker(s.faviconFileId)}
+        </div>
+        <label>Hero title<input name="homeHeroTitle" value="${escapeHtml(s.homeHeroTitle || "")}" placeholder="${escapeHtml(s.brandName || "Public site name")}"></label>
+        <label class="wide">Intro / subtitle<textarea name="introText">${escapeHtml(s.introText || "")}</textarea></label>
+        <div class="wide">
+          <strong>Hero image</strong>
+          <p class="field-help">Optional managed image shown beside the public homepage hero.</p>
+          ${imageSettingPicker("homeHeroImage", s.homeHeroImage)}
+        </div>
         <label>Main marketplace/store link ${helpIcon("Link to this seller's marketplace store page.")}<input name="marketplaceUrl" value="${escapeHtml(s.marketplaceUrl || "")}"></label>
         <label>Theme
           <select name="theme">
@@ -1002,9 +1033,8 @@ function brandingSettingsView() {
           </select>
         </label>
         <label>Default marketplace label<input name="defaultMarketplaceLabel" value="${escapeHtml(s.defaultMarketplaceLabel || "Buy on AliExpress")}"></label>
-        <label class="wide">Homepage intro text<textarea name="introText">${escapeHtml(s.introText || "")}</textarea></label>
         <label class="wide">Footer text<textarea name="footerText">${escapeHtml(s.footerText || "")}</textarea></label>
-        <button type="submit">Save settings</button>
+        <button type="submit">Save branding</button>
       </form>
     </section>
   `;

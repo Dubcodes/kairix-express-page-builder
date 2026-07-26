@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "fs-extra";
 import { runProcess } from "../admin/src/services/processRunner.js";
+import { verifyPublicFavicon } from "./check-public-favicon.mjs";
 
 const repositoryRoot = path.resolve(".");
 const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), "kairix-static-cache-check-"));
@@ -9,6 +10,8 @@ const readOnlyRoot = path.join(sandbox, "application");
 const siteRoot = path.join(readOnlyRoot, "site");
 const cacheDir = path.join(sandbox, "cache", "kairix-vite-site");
 const outputDir = path.join(sandbox, "output");
+const contentRoot = path.join(sandbox, "publish-job");
+const contentPath = path.join(contentRoot, "input", "content.json");
 
 async function makeTreeReadOnly(target) {
   const stat = await fs.lstat(target);
@@ -45,6 +48,21 @@ try {
     path.join(sandbox, "node_modules"),
     process.platform === "win32" ? "junction" : "dir"
   );
+  await fs.outputJson(contentPath, {
+    publicBaseUrl: "http://localhost:8080",
+    siteBasePath: "/preview",
+    runtimeApiEnabled: true,
+    settings: {
+      brandName: "Static cache verification",
+      introText: "Explicit build input",
+      theme: "clean-light"
+    },
+    categories: [],
+    products: [],
+    downloads: [],
+    supportPacks: [],
+    softwareBundles: []
+  });
   if (process.platform !== "win32") {
     await makeTreeReadOnly(readOnlyRoot);
     await fs.access(readOnlyRoot, fs.constants.R_OK | fs.constants.X_OK);
@@ -59,7 +77,10 @@ try {
       VITE_CACHE_DIR: cacheDir,
       ASTRO_OUT_DIR: outputDir,
       PUBLIC_BASE_URL: "http://localhost:8080",
-      PUBLIC_SITE_BASE_PATH: "/preview"
+      PUBLIC_SITE_BASE_PATH: "/preview",
+      KAIRIX_CONTENT_ROOT: contentRoot,
+      KAIRIX_CONTENT_PATH: contentPath,
+      KAIRIX_USE_SAMPLE_CONTENT: "false"
     },
     timeoutMs: 120_000,
     maxOutputBytes: 256 * 1024
@@ -77,6 +98,7 @@ try {
   if (await fs.pathExists(path.join(siteRoot, ".astro"))) {
     throw new Error("Static build wrote Astro working state under the read-only source tree.");
   }
+  await verifyPublicFavicon(outputDir, "/preview", "");
   const rootMode = process.platform === "win32"
     ? "isolated-root static build passed; POSIX runs additionally enforce a read-only application root"
     : "read-only-root static build passed";

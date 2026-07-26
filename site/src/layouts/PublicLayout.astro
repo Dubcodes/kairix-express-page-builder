@@ -4,7 +4,7 @@ import { assetPath, content, sitePath } from "../lib/content.js";
 const { title, description = content.settings.introText } = Astro.props;
 const s = content.settings;
 const theme = s.theme || "clean-light";
-const favicon = s.logo ? assetPath(s.logo) : sitePath("/favicon.svg");
+const favicon = s.favicon ? assetPath(s.favicon) : "";
 ---
 <!doctype html>
 <html lang="en" data-theme={theme}>
@@ -13,8 +13,8 @@ const favicon = s.logo ? assetPath(s.logo) : sitePath("/favicon.svg");
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content={description}>
     <title>{title ? `${title} - ${s.brandName}` : s.brandName}</title>
-    <link rel="icon" href={favicon}>
-    <link rel="apple-touch-icon" href={favicon}>
+    {favicon && <link rel="icon" href={favicon}>}
+    {favicon && <link rel="apple-touch-icon" href={favicon}>}
     <style is:global>
       :root {
         --bg: #f7f9fb;

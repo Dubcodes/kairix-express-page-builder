@@ -383,6 +383,7 @@ function uploadContentMatchesExtension(file) {
   if ([".bin", ".hex", ".uf2"].includes(ext)) return true;
   if (ext === ".jpg" || ext === ".jpeg") return starts(0xff, 0xd8, 0xff);
   if (ext === ".png") return starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+  if (ext === ".ico") return starts(0x00, 0x00, 0x01, 0x00);
   if (ext === ".gif") return ["GIF87a", "GIF89a"].includes(buffer.subarray(0, 6).toString("ascii"));
   if (ext === ".webp") return buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
   if (ext === ".pdf") return buffer.subarray(0, 5).toString("ascii") === "%PDF-";
@@ -754,6 +755,20 @@ app.get("/api/diagnostics", requireAdmin, (req, res) => {
 });
 
 app.put("/api/settings", requirePermission("write"), upload.single("logo"), (req, res) => {
+  let faviconFile = null;
+  if (Object.hasOwn(req.body, "faviconFileId")) {
+    const rawFaviconFileId = String(req.body.faviconFileId || "").trim();
+    const faviconFileId = Number(rawFaviconFileId);
+    if (rawFaviconFileId && (!Number.isInteger(faviconFileId) || faviconFileId <= 0)) {
+      return res.status(400).json({ error: "Select a valid managed public favicon." });
+    }
+    if (faviconFileId) {
+      faviconFile = db.prepare("SELECT id, stored_name, mime_type FROM files WHERE id = ?").get(faviconFileId);
+      if (!faviconFile || !/\.(?:svg|png|ico|jpe?g|gif|webp)$/i.test(faviconFile.stored_name)) {
+        return res.status(400).json({ error: "Select a managed browser-compatible image for the public favicon." });
+      }
+    }
+  }
   const fields = [
     "brandName",
     "marketplaceUrl",
@@ -785,6 +800,9 @@ app.put("/api/settings", requirePermission("write"), upload.single("logo"), (req
     const result = saveUploadedFileRecord(req.file);
     setSetting("logo", result.file.url);
     setSetting("logoFileId", String(result.file.id));
+  }
+  if (Object.hasOwn(req.body, "faviconFileId")) {
+    setSetting("faviconFileId", faviconFile ? String(faviconFile.id) : "");
   }
   res.json({ ok: true, settings: getSettings() });
 });
@@ -1086,6 +1104,7 @@ function fileUsageLabels(file) {
   const settings = getSettings();
   const url = `/uploads/${file.stored_name}`;
   if (String(settings.logoFileId || "") === String(file.id) || settingContainsFileUrl(settings.logo, url)) labels.push("Settings: logo");
+  if (String(settings.faviconFileId || "") === String(file.id)) labels.push("Settings: public favicon");
   if (settingContainsFileUrl(settings.homeHeroImage, url)) labels.push("Home page: hero image");
   if (settingContainsFileUrl(settings.homeTextBlockImage, url)) labels.push("Home page: customer block image");
 

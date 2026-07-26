@@ -48,6 +48,11 @@ function safePublicAsset(value) {
   return /^\/uploads\/[A-Za-z0-9._/%-]+$/.test(asset) ? asset : "";
 }
 
+function browserFaviconAsset(value) {
+  const asset = safePublicAsset(value);
+  return /\.(?:svg|png|ico|jpe?g|gif|webp)$/i.test(asset) ? asset : "";
+}
+
 function imageListSetting(value) {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
   const raw = String(value || "").trim();
@@ -124,6 +129,8 @@ export async function buildExportData() {
   const categories = db.prepare("SELECT * FROM categories WHERE archived = 0 ORDER BY sort_order, name").all();
   const files = db.prepare("SELECT * FROM files").all();
   const filesById = new Map(files.map((file) => [file.id, file]));
+  const logo = safePublicAsset(settings.logo);
+  const selectedFavicon = fileUrl(filesById.get(Number(settings.faviconFileId || 0))) || "";
   const contactMethods = db.prepare("SELECT label, type, value FROM contact_methods WHERE visible = 1 ORDER BY sort_order, id").all()
     .map((method) => ({
       label: clean(method.label),
@@ -267,8 +274,9 @@ export async function buildExportData() {
     siteBasePath: config.publicSiteBasePath,
     runtimeApiEnabled: config.deployProvider === "local",
     settings: {
-      brandName: settings.brandName || "Kairix Support",
-      logo: safePublicAsset(settings.logo),
+      brandName: settings.brandName || "Product Support",
+      logo,
+      favicon: browserFaviconAsset(selectedFavicon) || browserFaviconAsset(logo),
       marketplaceUrl: safeHttpUrl(settings.marketplaceUrl),
       introText: clean(settings.introText || "Find product information, manuals, apps, firmware and support downloads."),
       supportEmail: safeContactValue("email", settings.supportEmail),
