@@ -23,15 +23,17 @@ if (provider === "cloudflare-pages") {
   process.env.CLOUDFLARE_API_TOKEN = crypto.randomBytes(32).toString("hex");
 }
 
-const [{ config }, { buildExportData }, { runProcess }, { storageProvider }] = await Promise.all([
+const [{ config }, { db }, { buildExportData }, { runProcess }, { storageProvider }] = await Promise.all([
   import("../admin/src/config.js"),
+  import("../admin/src/db.js"),
   import("../admin/src/services/exportData.js"),
   import("../admin/src/services/processRunner.js"),
   import("../admin/src/providers/storage.js")
 ]);
 const data = await buildExportData();
 await fs.writeJson(path.join(config.projectRoot, "site", "src", "data", "content.json"), data, { spaces: 2 });
-await storageProvider.copyToPublic(path.join(config.projectRoot, "site", "public", "uploads"));
+const managedFiles = db.prepare("SELECT id, stored_name FROM files ORDER BY id").all();
+await storageProvider.copyToPublic(path.join(config.projectRoot, "site", "public", "uploads"), managedFiles);
 await fs.emptyDir(outputDir);
 const result = await runProcess(process.execPath, [path.join(config.projectRoot, "site", "scripts", "astro.mjs"), "build"], {
   cwd: config.projectRoot,

@@ -2,6 +2,7 @@ import sanitizeHtml from "sanitize-html";
 import QRCode from "qrcode";
 import { db, getSettings } from "../db.js";
 import { config } from "../config.js";
+import { isSafeManagedUploadPath } from "../providers/storage.js";
 
 const textTags = [];
 const richTags = ["p", "br", "strong", "b", "em", "i", "ul", "ol", "li", "a", "h2", "h3", "blockquote", "code", "pre"];
@@ -88,7 +89,7 @@ function productOptions(product, filesById) {
 
 function fileUrl(file) {
   if (!file) return null;
-  if (!/^[A-Za-z0-9._/-]+$/.test(file.stored_name) || file.stored_name.includes("..") || file.stored_name.startsWith("/")) return null;
+  if (!isSafeManagedUploadPath(file.stored_name)) return null;
   return `/uploads/${file.stored_name}`;
 }
 

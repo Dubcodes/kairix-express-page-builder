@@ -46,6 +46,8 @@ The database, uploads, backups, and last generated preview survive image replace
 
 Generated `site/src/data/content.json` and `site/public/uploads` inside the application container are build inputs reconstructed from SQLite and the uploads volume; they do not require separate persistence. Application logs go to container stdout/stderr. Configuration and Cloudflare credentials belong in Portainer environment/secret storage, not in volumes or Git.
 
+Public upload export is allowlisted by the application-managed `files` database records. Generated software bundles are recorded before export, so their nested `bundles/` paths remain included. Unrecorded files, hidden files, editor backups, temporary/partial files, filesystem metadata, symlinks, and special entries are not copied into the public site. Excluded or missing entry counts are written to the publish logs without exposing filesystem paths. Orphaned files remain in the uploads volume until an explicit cleanup workflow is run; publishing never deletes them.
+
 Before upgrades, create an in-app backup and separately back up all three Docker volumes. The in-app ZIP is not a complete volume backup.
 
 ## 4. First deployment: local mode

@@ -185,13 +185,30 @@ export async function publishSite(userId = null, dependencies = {}) {
       await assertSafeBuildRoot();
       await deployProvider.preflight({ signal });
       await fs.ensureDir(outputDir);
+      stage = "export";
       generatedBundles = await generateSoftwareBundleZips();
       const data = await buildExportData();
       const dataPath = path.join(config.projectRoot, "site", "src", "data", "content.json");
       const publicUploadsDir = path.join(config.projectRoot, "site", "public", "uploads");
       await fs.ensureDir(path.dirname(dataPath));
       await fs.writeJson(dataPath, data, { spaces: 2 });
-      await storageProvider.copyToPublic(publicUploadsDir);
+      const managedFiles = db.prepare("SELECT id, stored_name FROM files ORDER BY id").all();
+      const uploadExport = await storageProvider.copyToPublic(publicUploadsDir, managedFiles);
+      const excludedUploads = uploadExport.invalidRecords
+        + uploadExport.missingRecords
+        + uploadExport.excludedUnmanagedFiles
+        + uploadExport.excludedUnsafeEntries
+        + uploadExport.unreadableDirectories;
+      if (excludedUploads) {
+        console.warn(
+          `[publish ${jobId}] upload export copied ${uploadExport.copiedFiles} managed file(s); `
+          + `excluded ${uploadExport.excludedUnmanagedFiles} unmanaged file(s), `
+          + `${uploadExport.excludedUnsafeEntries} unsafe entry/entries, `
+          + `${uploadExport.invalidRecords} invalid record(s), `
+          + `${uploadExport.missingRecords} missing record(s), and `
+          + `${uploadExport.unreadableDirectories} unreadable director${uploadExport.unreadableDirectories === 1 ? "y" : "ies"}.`
+        );
+      }
 
       stage = "build";
       const build = await runProcessImpl(process.execPath, [path.join(config.projectRoot, "site", "scripts", "astro.mjs"), "build"], {
@@ -283,6 +300,7 @@ export async function publishSite(userId = null, dependencies = {}) {
       return result;
     } catch (error) {
       const eventType = {
+        export: "publish_export_failed",
         validation: "publish_validation_failed",
         deployment: "publish_deployment_failed",
         promotion: "publish_preview_promotion_failed"
