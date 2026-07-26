@@ -3,6 +3,7 @@ import path from "node:path";
 
 const root = path.resolve(".");
 const dockerfile = fs.readFileSync(path.join(root, "Dockerfile"), "utf8");
+const compose = fs.readFileSync(path.join(root, "docker-compose.yml"), "utf8");
 const adminPackage = JSON.parse(fs.readFileSync(path.join(root, "admin", "package.json"), "utf8"));
 const sitePackage = JSON.parse(fs.readFileSync(path.join(root, "site", "package.json"), "utf8"));
 const logicalLines = dockerfile
@@ -49,6 +50,15 @@ if (!/npm ci\s+--omit=dev\b/.test(dockerfile.replace(/\\\r?\n\s*/g, " "))) {
 }
 if (!logicalLines.some((line) => /^USER\s+node$/i.test(line))) {
   throw new Error("Docker runtime stage must retain non-root USER node.");
+}
+if (!logicalLines.some((line) => /^ENV\s+VITE_CACHE_DIR=\/tmp\/kairix-vite-site$/i.test(line))) {
+  throw new Error("Docker runtime must place the production Vite cache under /tmp.");
+}
+if (!/VITE_CACHE_DIR:\s*\$\{VITE_CACHE_DIR:-\/tmp\/kairix-vite-site\}/.test(compose)) {
+  throw new Error("Compose must default VITE_CACHE_DIR to the ephemeral /tmp cache.");
+}
+if (!/\/tmp:uid=1000,gid=1000,mode=1777/.test(compose)) {
+  throw new Error("Compose must retain the node-writable /tmp tmpfs.");
 }
 if (!/^\d+\.\d+\.\d+$/.test(String(adminPackage.dependencies?.wrangler || ""))) {
   throw new Error("Wrangler must remain an exact-pinned runtime dependency.");

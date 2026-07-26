@@ -7,10 +7,11 @@ import { config } from "../config.js";
 import { db } from "../db.js";
 import { buildExportData } from "./exportData.js";
 import { storageProvider } from "../providers/storage.js";
-import { createDeployProvider, redactSecrets } from "../providers/deploy.js";
+import { createDeployProvider } from "../providers/deploy.js";
 import { runProcess } from "./processRunner.js";
 import { isPathInside, SiteValidationError, validateGeneratedSite } from "./siteValidation.js";
 import { withPublishLock } from "./publishLock.js";
+import { ensureSafePublishError, formatPublishFailure } from "./publishDiagnostics.js";
 export { cancelActivePublish, PublishInProgressError, publishStatus, withPublishLock } from "./publishLock.js";
 
 function stripAnsi(value) {
@@ -197,6 +198,7 @@ export async function publishSite(userId = null, dependencies = {}) {
         cwd: config.projectRoot,
         env: {
           ...process.env,
+          ASTRO_WORK_DIR: jobDir,
           ASTRO_OUT_DIR: outputDir,
           PUBLIC_BASE_URL: config.publicBaseUrl,
           PUBLIC_SITE_BASE_PATH: config.publicSiteBasePath
@@ -285,7 +287,7 @@ export async function publishSite(userId = null, dependencies = {}) {
         deployment: "publish_deployment_failed",
         promotion: "publish_preview_promotion_failed"
       }[stage] || "publish_failed";
-      const safeError = redactSecrets(error.message || error, [config.cloudflareApiToken]).slice(0, 4_000);
+      ensureSafePublishError(error);
       recordAudit(userId, eventType, {
         jobId,
         message: stage === "validation" ? "Generated-site validation failed" : "Publish or deployment failed",
@@ -300,7 +302,12 @@ export async function publishSite(userId = null, dependencies = {}) {
         stage,
         code: error.code || "PUBLISH_FAILED"
       });
-      console.error(`[publish ${jobId}] ${safeError}`);
+      console.error(formatPublishFailure({
+        jobId,
+        stage,
+        error,
+        secrets: [config.cloudflareApiToken, config.sessionSecret, config.encryptionSecret]
+      }));
       throw error;
     } finally {
       await fs.remove(jobDir).catch((cleanupError) => {

@@ -13,8 +13,9 @@
     "build": "npm run build --workspace site",
     "publish": "node admin/src/scripts/publish.js",
     "test": "node --test --test-isolation=none admin/test/*.test.js",
-    "check": "npm run check:docker && node --check admin/src/server.js && npm run build --workspace site",
+    "check": "npm run check:docker && npm run check:static-cache && node --check admin/src/server.js && npm run build --workspace site",
     "check:docker": "node scripts/check-docker-workspaces.mjs",
+    "check:static-cache": "node scripts/check-static-build-cache.mjs",
     "scan:public": "node scripts/scan-public.js",
     "check:links": "node scripts/check-static-links.js"
   },

@@ -26,6 +26,7 @@ RUN mkdir -p /app/data/backups /app/uploads /app/generated-site/current /app/gen
 
 ENV NODE_ENV=production
 ENV PORT=8080
+ENV VITE_CACHE_DIR=/tmp/kairix-vite-site
 
 USER node
 

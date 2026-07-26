@@ -40,6 +40,8 @@ The Compose stack creates named volumes. Their Docker-managed host paths vary by
 | `<stack>_kairix-uploads` | `/app/uploads` | Uploaded images, manuals, firmware, installers, and generated bundle ZIPs |
 | `<stack>_kairix-generated-site` | `/app/generated-site` | Last promoted preview under `current` and temporary publish jobs under `.publish-staging` |
 
+Vite's disposable build cache uses `/tmp/kairix-vite-site` on the existing node-writable tmpfs. It is recreated automatically and must not be mounted as persistent storage.
+
 The database, uploads, backups, and last generated preview survive image replacement and normal stack redeployment. Publish staging and the live preview share one volume so final promotion is an atomic directory rename. Failed/current job directories are removed in the publish `finally` path and stale `publish-*` directories are removed at application startup.
 
 Generated `site/src/data/content.json` and `site/public/uploads` inside the application container are build inputs reconstructed from SQLite and the uploads volume; they do not require separate persistence. Application logs go to container stdout/stderr. Configuration and Cloudflare credentials belong in Portainer environment/secret storage, not in volumes or Git.
@@ -71,6 +73,7 @@ MAX_UPLOAD_MB=25
 PUBLISH_MAX_FILES=20000
 PUBLISH_MAX_TOTAL_MB=500
 PUBLISH_MAX_FILE_MB=25
+VITE_CACHE_DIR=/tmp/kairix-vite-site
 CLOUDFLARE_DEPLOY_TIMEOUT_MS=600000
 CLOUDFLARE_PREFLIGHT_TIMEOUT_MS=15000
 ```
