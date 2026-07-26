@@ -1,3 +1,5 @@
+import { invitationLinkNote, renderLinkResult } from "./linkResult.js";
+
 const app = document.querySelector("#app");
 const adminTitle = document.querySelector("#adminTitle");
 const adminLogo = document.querySelector("#adminLogo");
@@ -493,18 +495,6 @@ function roleOptions(selected = "Read Only") {
   return roles.map((role) => `<option value="${role}" ${role === selected ? "selected" : ""}>${role}</option>`).join("");
 }
 
-function linkResult(label, url) {
-  if (!url) return "";
-  return `
-    <div class="link-result">
-      <label>${escapeHtml(label)}<input readonly value="${escapeHtml(url)}" onclick="this.select()"></label>
-      <a class="action-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open</a>
-      <button class="secondary" type="button" data-copy-value="${escapeHtml(url)}">Copy</button>
-      <p class="muted wide">This is a one-time link. It expires after the selected time. If approval is required, the user cannot log in until approved.</p>
-    </div>
-  `;
-}
-
 function stockLabel(product) {
   if (!product.stock_tracking) return "Not tracked";
   if (product.stock_display_mode === "hidden") return "Hidden";
@@ -669,7 +659,7 @@ function updateAdminTitle(settings = {}) {
     }
     favicon.href = settings.logo;
   } else if (favicon) {
-    favicon.remove();
+    favicon.href = "/assets/favicon.svg";
   }
   document.title = title;
 }
@@ -1688,7 +1678,7 @@ function bindUserActionButtons() {
     button.addEventListener("click", async () => {
       const result = await api(`/api/users/${button.dataset.resetUser}/password-reset`, { method: "POST", body: {} });
       const target = document.querySelector(`#userResult-${button.dataset.resetUser}`);
-      if (target) target.innerHTML = linkResult("Password reset link", result.resetUrl);
+      if (target) target.innerHTML = renderLinkResult("Password reset link", result.resetUrl);
       if (target) bindCopyButtons(target);
       setStatus("Password reset link generated.");
     });
@@ -1973,7 +1963,7 @@ function bindTabEvents(content) {
             <p>${pill("Success", "success")} ${escapeHtml(result.build?.summary || result.message || "Static site published")}</p>
             <p class="muted">${escapeHtml(String(result.build?.fileCount || 0))} files · ${escapeHtml(String(result.build?.totalBytes || 0))} bytes · ${escapeHtml(String(result.build?.durationMs || 0))} ms build</p>
             ${result.deploymentId ? `<p class="muted">Deployment ID: ${escapeHtml(result.deploymentId)}</p>` : ""}
-            ${linkResult(result.provider === "cloudflare-pages" ? "Public site" : "Local preview", result.publicUrl || result.deploymentUrl)}
+            ${renderLinkResult(result.provider === "cloudflare-pages" ? "Public site" : "Local preview", result.publicUrl || result.deploymentUrl)}
           </div>
         `;
         bindCopyButtons(output);
@@ -2338,7 +2328,7 @@ function bindTabEvents(content) {
   if (aliexpressConnectBtn) aliexpressConnectBtn.addEventListener("click", async () => {
     const result = await api("/api/integrations/aliexpress/connect", { method: "POST", body: {} });
     const output = document.querySelector("#aliexpressOutput");
-    if (output) output.innerHTML = linkResult("AliExpress authorization URL", result.authUrl);
+    if (output) output.innerHTML = renderLinkResult("AliExpress authorization URL", result.authUrl);
     output?.querySelectorAll("[data-copy-value]").forEach((button) => {
       button.addEventListener("click", async () => {
         await navigator.clipboard.writeText(button.dataset.copyValue || "");
@@ -2778,7 +2768,7 @@ function bindTabEvents(content) {
     values.requiresApproval = Boolean(inviteCreateForm.querySelector("[name='requiresApproval']").checked);
     const invite = await api("/api/invites", { method: "POST", body: values });
     const target = document.querySelector("#inviteResult");
-    target.innerHTML = linkResult("Invite URL", invite.inviteUrl);
+    target.innerHTML = renderLinkResult("Invite URL", invite.inviteUrl, { note: invitationLinkNote });
     bindCopyButtons(target);
     await loadUsersAndInvites();
   });
@@ -2792,7 +2782,7 @@ function bindTabEvents(content) {
     values.requiresApproval = Boolean(supportAccessForm.querySelector("[name='requiresApproval']").checked);
     const invite = await api("/api/support-access", { method: "POST", body: values });
     const target = document.querySelector("#supportAccessResult");
-    target.innerHTML = linkResult("Temporary support link", invite.inviteUrl);
+    target.innerHTML = renderLinkResult("Temporary support link", invite.inviteUrl, { note: invitationLinkNote });
     bindCopyButtons(target);
     await loadUsersAndInvites();
   });

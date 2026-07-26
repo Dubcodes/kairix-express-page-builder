@@ -9,6 +9,19 @@ const wranglerPackagePath = require.resolve("wrangler/package.json");
 const defaultWranglerCliPath = path.join(path.dirname(wranglerPackagePath), "wrangler-dist", "cli.js");
 const transientStatuses = new Set([429, 500, 502, 503, 504]);
 
+export function publicSiteUrl(baseUrl, basePath = "") {
+  const url = new URL(String(baseUrl || ""));
+  const existingSegments = url.pathname.split("/").filter(Boolean);
+  const baseSegments = String(basePath || "").split("/").filter(Boolean);
+  const alreadyIncludesBase = baseSegments.length > 0
+    && existingSegments.slice(-baseSegments.length).join("/") === baseSegments.join("/");
+  const segments = alreadyIncludesBase ? existingSegments : [...existingSegments, ...baseSegments];
+  url.pathname = `/${segments.join("/")}${segments.length ? "/" : ""}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
 export class DeployConfigurationError extends Error {
   constructor(message) {
     super(message);
@@ -103,7 +116,7 @@ export class LocalDeployProvider {
       provider: this.name,
       mode: "local-preview",
       outputDir,
-      publicUrl: this.options.publicBaseUrl,
+      publicUrl: publicSiteUrl(this.options.publicBaseUrl, this.options.publicSiteBasePath),
       message: "Static site generated for the local preview."
     };
   }
@@ -118,7 +131,8 @@ export class CloudflarePagesDeployProvider {
       apiToken: options.cloudflareApiToken ?? options.apiToken,
       timeoutMs: options.cloudflareDeployTimeoutMs ?? options.timeoutMs ?? 10 * 60 * 1000,
       preflightTimeoutMs: options.cloudflarePreflightTimeoutMs ?? 15_000,
-      publicBaseUrl: options.publicBaseUrl || ""
+      publicBaseUrl: options.publicBaseUrl || "",
+      publicSiteBasePath: options.publicSiteBasePath || ""
     };
     this.dependencies = {
       fetchImpl: dependencies.fetchImpl || globalThis.fetch,
@@ -235,7 +249,7 @@ export class CloudflarePagesDeployProvider {
         provider: this.name,
         mode: "cloudflare-production",
         projectName: options.projectName,
-        publicUrl: this.options.publicBaseUrl || parsed.deploymentUrl,
+        publicUrl: publicSiteUrl(this.options.publicBaseUrl || parsed.deploymentUrl, this.options.publicSiteBasePath),
         message: "Static site deployed to Cloudflare Pages.",
         ...parsed
       };

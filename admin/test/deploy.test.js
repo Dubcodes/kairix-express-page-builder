@@ -9,6 +9,7 @@ import {
   LocalDeployProvider,
   createDeployProvider,
   parseWranglerOutput,
+  publicSiteUrl,
   redactSecrets,
   validateCloudflareConfig
 } from "../src/providers/deploy.js";
@@ -18,7 +19,8 @@ const valid = {
   projectName: "kairix-pages",
   branch: "main",
   apiToken: "test-token-value-that-is-never-real",
-  publicBaseUrl: "https://support.example.test"
+  publicBaseUrl: "https://support.example.test",
+  publicSiteBasePath: ""
 };
 
 test("provider factory selects local and rejects unknown providers", () => {
@@ -27,11 +29,21 @@ test("provider factory selects local and rejects unknown providers", () => {
 });
 
 test("local provider remains independent of Cloudflare configuration", async () => {
-  const provider = new LocalDeployProvider({ publicBaseUrl: "http://localhost:4321" });
+  const provider = new LocalDeployProvider({
+    publicBaseUrl: "http://localhost:4321",
+    publicSiteBasePath: "/preview"
+  });
   assert.deepEqual(await provider.preflight(), { ok: true, provider: "local" });
   const result = await provider.deploy({ outputDir: "generated" });
   assert.equal(result.provider, "local");
   assert.equal(result.mode, "local-preview");
+  assert.equal(result.publicUrl, "http://localhost:4321/preview/");
+});
+
+test("public deployment URLs join base paths once and keep Cloudflare at root", () => {
+  assert.equal(publicSiteUrl("http://192.168.0.238:8040", "/preview/"), "http://192.168.0.238:8040/preview/");
+  assert.equal(publicSiteUrl("http://192.168.0.238:8040/preview/", "/preview"), "http://192.168.0.238:8040/preview/");
+  assert.equal(publicSiteUrl("https://support.example.test", ""), "https://support.example.test/");
 });
 
 test("Cloudflare configuration rejects missing, invalid, and injection-shaped values", () => {
@@ -112,7 +124,7 @@ test("Cloudflare deploy invokes installed Wrangler without shell or token argume
     assert.equal(invocation.args.includes(valid.apiToken), false);
     assert.equal(invocation.args.includes("--project-name"), true);
     assert.equal(result.deploymentId, "deployment-123");
-    assert.equal(result.publicUrl, valid.publicBaseUrl);
+    assert.equal(result.publicUrl, `${valid.publicBaseUrl}/`);
   } finally {
     await fs.remove(temp);
   }

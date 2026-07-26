@@ -16,7 +16,10 @@ try {
 export const content = exportedContent;
 
 function cleanBasePath() {
-  const base = String(content.siteBasePath || "").trim();
+  const configuredBase = content.siteBasePath === undefined || content.siteBasePath === null
+    ? import.meta.env?.BASE_URL
+    : content.siteBasePath;
+  const base = String(configuredBase || "").trim();
   if (!base || base === "/") return "";
   return `/${base.replace(/^\/+|\/+$/g, "")}`;
 }

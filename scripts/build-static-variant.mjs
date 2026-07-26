@@ -1,6 +1,7 @@
 import path from "node:path";
 import crypto from "node:crypto";
 import fs from "fs-extra";
+import { verifyPublicFavicon } from "./check-public-favicon.mjs";
 
 const values = Object.fromEntries(process.argv.slice(2).map((item) => {
   const index = item.indexOf("=");
@@ -41,5 +42,7 @@ const result = await runProcess(process.execPath, [path.join(config.projectRoot,
   timeoutMs: 120_000,
   maxOutputBytes: 256 * 1024
 });
+const favicon = await verifyPublicFavicon(outputDir, basePath);
 process.stdout.write(result.stdout);
 process.stderr.write(result.stderr);
+console.log(`Verified favicon on ${favicon.pageCount} generated page(s) at ${favicon.href}.`);
