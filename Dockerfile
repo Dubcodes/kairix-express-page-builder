@@ -16,8 +16,9 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
-COPY --from=dependencies --chown=node:node /app/site/node_modules ./site/node_modules
+# Preserve npm's complete workspace install layout. Dependencies may be hoisted
+# to /app/node_modules or placed under a workspace as the lockfile evolves.
+COPY --from=dependencies --chown=node:node /app/ /app/
 COPY --chown=node:node . .
 
 RUN mkdir -p /app/data/backups /app/uploads /app/generated-site/current /app/generated-site/.publish-staging /app/site/src/data /app/site/public/uploads \
