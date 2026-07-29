@@ -38,7 +38,7 @@ export class DeploymentError extends Error {
     this.name = "DeploymentError";
     this.code = code;
     this.statusCode = statusCode;
-    this.publicMessage = publicMessage || "Cloudflare Pages deployment failed. Review the redacted server diagnostics before retrying.";
+    this.publicMessage = publicMessage || "Cloudflare deployment failed. Review the redacted server diagnostics before retrying.";
     this.cause = cause;
   }
 }
@@ -69,7 +69,38 @@ export function validateCloudflareConfig(options) {
   return { accountId, projectName, branch, apiToken };
 }
 
-export function parseWranglerOutput(text) {
+export function validateCloudflareWorkersConfig(options) {
+  const accountId = String(options.accountId || "").trim();
+  const workerName = String(options.workerName || "").trim();
+  const apiToken = String(options.apiToken || "").trim();
+  const publicBaseUrl = String(options.publicBaseUrl || "").trim();
+  if (!accountId || !workerName || !apiToken) {
+    throw new DeployConfigurationError("Cloudflare Workers publishing requires account ID, Worker name, and API token environment variables.");
+  }
+  if (!/^[a-f0-9]{32}$/i.test(accountId)) throw new DeployConfigurationError("CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal account ID.");
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(workerName)) {
+    throw new DeployConfigurationError("CLOUDFLARE_WORKER_NAME must be 1-63 lowercase letters, numbers, or hyphens and cannot start or end with a hyphen.");
+  }
+  let publicUrl;
+  try {
+    publicUrl = new URL(publicBaseUrl);
+  } catch {
+    throw new DeployConfigurationError("PUBLIC_BASE_URL must be the absolute HTTPS root URL for the Cloudflare Worker.");
+  }
+  if (
+    publicUrl.protocol !== "https:"
+    || publicUrl.username
+    || publicUrl.password
+    || !["", "/"].includes(publicUrl.pathname)
+    || publicUrl.search
+    || publicUrl.hash
+  ) {
+    throw new DeployConfigurationError("PUBLIC_BASE_URL must be the absolute HTTPS root URL for the Cloudflare Worker.");
+  }
+  return { accountId, workerName, apiToken, publicBaseUrl: publicUrl.origin };
+}
+
+function structuredWranglerRecords(text) {
   const records = [];
   const malformed = [];
   for (const line of String(text || "").split(/\r?\n/).filter(Boolean)) {
@@ -80,6 +111,11 @@ export function parseWranglerOutput(text) {
       malformed.push(line.slice(0, 200));
     }
   }
+  return { records, malformed };
+}
+
+export function parseWranglerOutput(text) {
+  const { records, malformed } = structuredWranglerRecords(text);
   const detailed = [...records].reverse().find((record) => record.type === "pages-deploy-detailed");
   const basic = [...records].reverse().find((record) => record.type === "pages-deploy");
   const result = detailed || basic;
@@ -97,6 +133,41 @@ export function parseWranglerOutput(text) {
     environment: result.environment || null,
     branch: result.production_branch || null,
     deployedAt: result.timestamp || basic?.timestamp || null,
+    malformedRecordCount: malformed.length
+  };
+}
+
+export function parseWorkersWranglerOutput(text, expectedWorkerName = "") {
+  const { records, malformed } = structuredWranglerRecords(text);
+  const result = [...records].reverse().find((record) => record.type === "deploy");
+  if (!result) throw new DeploymentError("Wrangler completed without a Worker deploy result record.", {
+    code: "WRANGLER_OUTPUT_INVALID",
+    publicMessage: "Cloudflare returned an unrecognised Worker deployment result. Check the server diagnostics before retrying."
+  });
+  if (expectedWorkerName && result.worker_name && result.worker_name !== expectedWorkerName) {
+    throw new DeploymentError("Wrangler reported a different Worker name than configured.", {
+      code: "WRANGLER_OUTPUT_INVALID",
+      publicMessage: "Cloudflare returned an unexpected Worker deployment target. Check the server diagnostics before retrying."
+    });
+  }
+  const targets = Array.isArray(result.targets) ? result.targets : [];
+  const targetUrls = targets.map((target) => {
+    const rawTarget = typeof target === "string" ? target : target?.url || target?.href || "";
+    if (!rawTarget) return "";
+    try {
+      const url = new URL(rawTarget.includes("://") ? rawTarget : `https://${rawTarget}`);
+      return url.protocol === "https:" ? url.toString().replace(/\/$/, "") : "";
+    } catch {
+      return "";
+    }
+  }).filter(Boolean);
+  const deploymentUrl = targetUrls.find((target) => /\.workers\.dev(?:\/|$)/i.test(target)) || targetUrls[0] || null;
+  return {
+    workerName: result.worker_name || expectedWorkerName || null,
+    versionId: result.version_id || null,
+    deploymentId: result.version_id || null,
+    deploymentUrl,
+    targets: targetUrls,
     malformedRecordCount: malformed.length
   };
 }
@@ -267,9 +338,159 @@ export class CloudflarePagesDeployProvider {
   }
 }
 
+export class CloudflareWorkersDeployProvider {
+  constructor(options = {}, dependencies = {}) {
+    this.options = {
+      accountId: options.cloudflareAccountId ?? options.accountId,
+      workerName: options.cloudflareWorkerName ?? options.workerName,
+      apiToken: options.cloudflareApiToken ?? options.apiToken,
+      timeoutMs: options.cloudflareDeployTimeoutMs ?? options.timeoutMs ?? 10 * 60 * 1000,
+      preflightTimeoutMs: options.cloudflarePreflightTimeoutMs ?? 15_000,
+      publicBaseUrl: options.publicBaseUrl || "",
+      publicSiteBasePath: options.publicSiteBasePath || ""
+    };
+    this.dependencies = {
+      fetchImpl: dependencies.fetchImpl || globalThis.fetch,
+      runProcessImpl: dependencies.runProcessImpl || runProcess,
+      wranglerCliPath: dependencies.wranglerCliPath || defaultWranglerCliPath,
+      fsImpl: dependencies.fsImpl || fs,
+      waitImpl: dependencies.waitImpl || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+      compatibilityDate: dependencies.compatibilityDate || new Date().toISOString().slice(0, 10)
+    };
+    this.name = "cloudflare-workers";
+  }
+
+  validatedOptions() {
+    const options = { ...this.options, ...validateCloudflareWorkersConfig(this.options) };
+    if (options.publicSiteBasePath !== "") {
+      throw new DeployConfigurationError("PUBLIC_SITE_BASE_PATH must be empty for Cloudflare Workers Static Assets publishing.");
+    }
+    return options;
+  }
+
+  async preflight({ signal } = {}) {
+    const options = this.validatedOptions();
+    const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(options.accountId)}/workers/scripts`;
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), options.preflightTimeoutMs);
+      try {
+        const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
+        const response = await this.dependencies.fetchImpl(url, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${options.apiToken}`, Accept: "application/json" },
+          signal: requestSignal
+        });
+        if (response.ok) {
+          const payload = await response.json();
+          if (!payload?.success || !Array.isArray(payload?.result)) {
+            throw new DeploymentError("Cloudflare Worker preflight returned an unexpected response.", {
+              code: "CLOUDFLARE_PREFLIGHT_INVALID",
+              publicMessage: "Cloudflare Workers preflight returned an unexpected response."
+            });
+          }
+          const workerExists = payload.result.some((worker) => worker?.id === options.workerName);
+          return { ok: true, provider: this.name, workerName: options.workerName, workerExists };
+        }
+        if (response.status === 401 || response.status === 403) {
+          throw new DeploymentError("Cloudflare Worker preflight was not authorised.", {
+            code: "CLOUDFLARE_AUTH_FAILED",
+            publicMessage: "Cloudflare rejected the configured account or API token."
+          });
+        }
+        if (!transientStatuses.has(response.status) || attempt === 2) {
+          throw new DeploymentError(`Cloudflare Worker preflight failed with HTTP ${response.status}.`, {
+            code: "CLOUDFLARE_PREFLIGHT_FAILED",
+            publicMessage: "Cloudflare Workers preflight failed. No upload was started."
+          });
+        }
+        lastError = new Error(`HTTP ${response.status}`);
+      } catch (error) {
+        if (error instanceof DeploymentError) throw error;
+        lastError = error;
+        if (attempt === 2) {
+          throw new DeploymentError("Cloudflare Worker preflight could not reach the API.", {
+            code: error?.name === "AbortError" ? "CLOUDFLARE_PREFLIGHT_TIMEOUT" : "CLOUDFLARE_PREFLIGHT_NETWORK",
+            cause: error,
+            publicMessage: "Cloudflare Workers preflight could not reach the API. No upload was started."
+          });
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      await this.dependencies.waitImpl(200 * (attempt + 1));
+    }
+    throw lastError;
+  }
+
+  async deploy({ outputDir, outputFilePath, message = "Kairix static-site publish", signal }) {
+    const options = this.validatedOptions();
+    const assetsDir = path.resolve(outputDir);
+    const args = [
+      "--no-warnings",
+      this.dependencies.wranglerCliPath,
+      "deploy",
+      "--assets",
+      assetsDir,
+      "--name",
+      options.workerName,
+      "--compatibility-date",
+      this.dependencies.compatibilityDate,
+      "--message",
+      String(message).slice(0, 120),
+      "--keep-vars",
+      "--no-autoconfig"
+    ];
+    const env = {
+      ...process.env,
+      CLOUDFLARE_ACCOUNT_ID: options.accountId,
+      CLOUDFLARE_API_TOKEN: options.apiToken,
+      WRANGLER_OUTPUT_FILE_PATH: outputFilePath,
+      WRANGLER_LOG_SANITIZE: "true",
+      WRANGLER_SEND_METRICS: "false",
+      XDG_CONFIG_HOME: "/tmp/kairix-wrangler/config",
+      XDG_CACHE_HOME: "/tmp/kairix-wrangler/cache",
+      NO_COLOR: "1",
+      CI: "true"
+    };
+    try {
+      await this.dependencies.runProcessImpl(process.execPath, args, {
+        cwd: path.dirname(assetsDir),
+        env,
+        timeoutMs: options.timeoutMs,
+        maxOutputBytes: 256 * 1024,
+        signal
+      });
+      const structuredOutput = await this.dependencies.fsImpl.readFile(outputFilePath, "utf8");
+      const parsed = parseWorkersWranglerOutput(structuredOutput, options.workerName);
+      return {
+        provider: this.name,
+        providerLabel: "Cloudflare Workers",
+        mode: "cloudflare-production",
+        workerName: options.workerName,
+        publicUrl: publicSiteUrl(this.options.publicBaseUrl || parsed.deploymentUrl, ""),
+        message: "Static site deployed to Cloudflare Workers.",
+        ...parsed
+      };
+    } catch (error) {
+      if (error instanceof DeploymentError) throw error;
+      const diagnostic = redactSecrets(`${error.message || error}\n${error.stderr || ""}`, [options.apiToken]).slice(0, 4_000);
+      throw new DeploymentError(diagnostic, {
+        code: error.timedOut ? "CLOUDFLARE_DEPLOY_TIMEOUT" : "CLOUDFLARE_DEPLOY_FAILED",
+        cause: error,
+        publicMessage: error.timedOut
+          ? "Cloudflare Workers deployment timed out. It may still have been created; inspect Cloudflare before retrying."
+          : "Cloudflare Workers deployment failed. It was not retried automatically."
+      });
+    }
+  }
+}
+
 export function createDeployProvider(options = config, dependencies = {}) {
   const name = String(options.deployProvider || "local").trim().toLowerCase();
   if (name === "local") return new LocalDeployProvider(options);
   if (name === "cloudflare-pages") return new CloudflarePagesDeployProvider(options, dependencies);
-  throw new DeployConfigurationError(`Unsupported DEPLOY_PROVIDER: ${name || "(blank)"}. Use local or cloudflare-pages.`);
+  if (name === "cloudflare-workers") return new CloudflareWorkersDeployProvider(options, dependencies);
+  throw new DeployConfigurationError(`Unsupported DEPLOY_PROVIDER: ${name || "(blank)"}. Use local, cloudflare-pages, or cloudflare-workers.`);
 }

@@ -23,11 +23,16 @@ process.env.ASTRO_WORK_DIR = jobDir;
 process.env.KAIRIX_CONTENT_ROOT = jobDir;
 process.env.KAIRIX_CONTENT_PATH = contentPath;
 process.env.KAIRIX_USE_SAMPLE_CONTENT = "false";
-if (provider === "cloudflare-pages") {
+if (["cloudflare-pages", "cloudflare-workers"].includes(provider)) {
   process.env.CLOUDFLARE_ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+  process.env.CLOUDFLARE_API_TOKEN = crypto.randomBytes(32).toString("hex");
+}
+if (provider === "cloudflare-pages") {
   process.env.CLOUDFLARE_PAGES_PROJECT = "verification-project";
   process.env.CLOUDFLARE_PAGES_BRANCH = "main";
-  process.env.CLOUDFLARE_API_TOKEN = crypto.randomBytes(32).toString("hex");
+}
+if (provider === "cloudflare-workers") {
+  process.env.CLOUDFLARE_WORKER_NAME = "verification-worker";
 }
 
 const [{ config }, { db }, { buildExportData }, { runProcess }, { storageProvider }] = await Promise.all([

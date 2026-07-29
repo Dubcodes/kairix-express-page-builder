@@ -13,12 +13,14 @@ services:
       PUBLIC_BUILD_TEMP_DIR: /app/generated-site/.publish-staging
       BACKUPS_DIR: /app/data/backups
       VITE_CACHE_DIR: ${VITE_CACHE_DIR:-/tmp/kairix-vite-site}
+      XDG_CONFIG_HOME: ${XDG_CONFIG_HOME:-/tmp/kairix-wrangler/config}
+      XDG_CACHE_HOME: ${XDG_CACHE_HOME:-/tmp/kairix-wrangler/cache}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       ENABLE_SAMPLE_DATA_TOOLS: ${ENABLE_SAMPLE_DATA_TOOLS:-false}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:4321}
-      # Set explicitly in Portainer: /preview for built-in local preview, empty for Pages root.
+      # Set explicitly in Portainer: /preview for local mode; empty for Cloudflare root deployments.
       PUBLIC_SITE_BASE_PATH: ${PUBLIC_SITE_BASE_PATH:-}
       ADMIN_BASE_URL: ${ADMIN_BASE_URL:-http://localhost:8080}
       ADMIN_HOSTNAME: ${ADMIN_HOSTNAME:-}
@@ -27,6 +29,7 @@ services:
       CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
       CLOUDFLARE_PAGES_PROJECT: ${CLOUDFLARE_PAGES_PROJECT:-}
       CLOUDFLARE_PAGES_BRANCH: ${CLOUDFLARE_PAGES_BRANCH:-main}
+      CLOUDFLARE_WORKER_NAME: ${CLOUDFLARE_WORKER_NAME:-}
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
       CLOUDFLARE_DEPLOY_TIMEOUT_MS: ${CLOUDFLARE_DEPLOY_TIMEOUT_MS:-600000}
       CLOUDFLARE_PREFLIGHT_TIMEOUT_MS: ${CLOUDFLARE_PREFLIGHT_TIMEOUT_MS:-15000}

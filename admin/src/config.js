@@ -59,14 +59,17 @@ const publicBaseUrl = process.env.PUBLIC_BASE_URL || "http://localhost:4321";
 const publicSiteBasePath = process.env.PUBLIC_SITE_BASE_PATH ?? "/preview";
 const adminBaseUrl = process.env.ADMIN_BASE_URL || "http://localhost:8080";
 
-if (!new Set(["local", "cloudflare-pages"]).has(deployProvider)) {
-  throw new Error("DEPLOY_PROVIDER must be local or cloudflare-pages.");
+if (!new Set(["local", "cloudflare-pages", "cloudflare-workers"]).has(deployProvider)) {
+  throw new Error("DEPLOY_PROVIDER must be local, cloudflare-pages, or cloudflare-workers.");
 }
 
-if (deployProvider === "cloudflare-pages") {
-  for (const name of ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_PAGES_PROJECT", "CLOUDFLARE_API_TOKEN"]) {
-    if (!String(process.env[name] || "").trim()) throw new Error(`${name} is required when DEPLOY_PROVIDER=cloudflare-pages.`);
-  }
+const requiredCloudflareVariables = deployProvider === "cloudflare-pages"
+  ? ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_PAGES_PROJECT", "CLOUDFLARE_API_TOKEN"]
+  : deployProvider === "cloudflare-workers"
+    ? ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_WORKER_NAME", "CLOUDFLARE_API_TOKEN"]
+    : [];
+for (const name of requiredCloudflareVariables) {
+  if (!String(process.env[name] || "").trim()) throw new Error(`${name} is required when DEPLOY_PROVIDER=${deployProvider}.`);
 }
 
 if (process.env.NODE_ENV === "production" && sessionSecret === encryptionSecret) {
@@ -109,11 +112,13 @@ export function validateProductionConfiguration({
   if (publicUrl && !["http:", "https:"].includes(publicUrl.protocol)) issues.push("PUBLIC_BASE_URL must use http or https.");
   if (adminUrl?.protocol === "https:" && !secureCookies) issues.push("COOKIE_SECURE must be true when ADMIN_BASE_URL uses HTTPS.");
   if (secureCookies && !proxyTrusted) issues.push("TRUST_PROXY must be true when secure cookies are used behind the production reverse proxy.");
-  if (provider === "cloudflare-pages") {
-    if (publicUrl?.protocol !== "https:") issues.push("PUBLIC_BASE_URL must use HTTPS for Cloudflare Pages publishing.");
-    if (basePath !== "") issues.push("PUBLIC_SITE_BASE_PATH must be empty for a root Cloudflare Pages deployment.");
-    if (adminUrl && publicUrl && adminUrl.origin === publicUrl.origin) issues.push("ADMIN_BASE_URL and PUBLIC_BASE_URL must use different origins for Cloudflare Pages publishing.");
-    if (String(publicHostname || "").trim()) issues.push("PUBLIC_HOSTNAME must be empty in Cloudflare Pages mode; the private server must not receive public-site traffic.");
+  if (["cloudflare-pages", "cloudflare-workers"].includes(provider)) {
+    const providerLabel = provider === "cloudflare-workers" ? "Cloudflare Workers" : "Cloudflare Pages";
+    if (publicUrl?.protocol !== "https:") issues.push(`PUBLIC_BASE_URL must use HTTPS for ${providerLabel} publishing.`);
+    if (publicUrl && !["", "/"].includes(publicUrl.pathname)) issues.push(`PUBLIC_BASE_URL must be an origin URL without a path for ${providerLabel} publishing.`);
+    if (basePath !== "") issues.push(`PUBLIC_SITE_BASE_PATH must be empty for a root ${providerLabel} deployment.`);
+    if (adminUrl && publicUrl && adminUrl.origin === publicUrl.origin) issues.push(`ADMIN_BASE_URL and PUBLIC_BASE_URL must use different origins for ${providerLabel} publishing.`);
+    if (String(publicHostname || "").trim()) issues.push(`PUBLIC_HOSTNAME must be empty in ${providerLabel} mode; the private server must not receive public-site traffic.`);
   }
   return issues;
 }
@@ -196,6 +201,7 @@ export const config = {
   cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID || "",
   cloudflarePagesProject: process.env.CLOUDFLARE_PAGES_PROJECT || "",
   cloudflarePagesBranch: process.env.CLOUDFLARE_PAGES_BRANCH || "main",
+  cloudflareWorkerName: process.env.CLOUDFLARE_WORKER_NAME || "",
   cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN || "",
   cloudflareDeployTimeoutMs: positiveIntEnv("CLOUDFLARE_DEPLOY_TIMEOUT_MS", 10 * 60 * 1000, { min: 10_000, max: 60 * 60 * 1000 }),
   cloudflarePreflightTimeoutMs: positiveIntEnv("CLOUDFLARE_PREFLIGHT_TIMEOUT_MS", 15_000, { min: 1_000, max: 60_000 }),

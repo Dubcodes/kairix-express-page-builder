@@ -263,12 +263,15 @@ export async function publishSite(userId = null, dependencies = {}) {
       const git = await gitMetadata(runProcessImpl);
 
       stage = "deployment";
-      if (deployProvider.name === "cloudflare-pages") {
+      const cloudflareDeployment = ["cloudflare-pages", "cloudflare-workers"].includes(deployProvider.name);
+      if (cloudflareDeployment) {
         recordAudit(userId, "cloudflare_deployment_started", {
           jobId,
           message: "Cloudflare deployment started",
           startedAt,
-          metadata: { projectName: config.cloudflarePagesProject, branch: config.cloudflarePagesBranch }
+          metadata: deployProvider.name === "cloudflare-workers"
+            ? { workerName: config.cloudflareWorkerName }
+            : { projectName: config.cloudflarePagesProject, branch: config.cloudflarePagesBranch }
         });
       }
       const deployment = await deployProvider.deploy({
@@ -278,7 +281,7 @@ export async function publishSite(userId = null, dependencies = {}) {
         message: git.message || `Kairix publish ${jobId.slice(0, 8)}`,
         signal
       });
-      if (deployProvider.name === "cloudflare-pages") {
+      if (cloudflareDeployment) {
         recordAudit(userId, "cloudflare_deployment_completed", {
           jobId,
           message: "Cloudflare deployment completed",
@@ -286,6 +289,7 @@ export async function publishSite(userId = null, dependencies = {}) {
           metadata: {
             deploymentId: deployment.deploymentId,
             deploymentUrl: deployment.deploymentUrl,
+            workerName: deployment.workerName || null,
             projectName: deployment.projectName,
             branch: deployment.branch || config.cloudflarePagesBranch
           }
@@ -316,6 +320,7 @@ export async function publishSite(userId = null, dependencies = {}) {
         publicUrl: deployment.publicUrl,
         deploymentId: deployment.deploymentId || null,
         deploymentUrl: deployment.deploymentUrl || null,
+        workerName: deployment.workerName || null,
         build: result.build
       });
       return result;

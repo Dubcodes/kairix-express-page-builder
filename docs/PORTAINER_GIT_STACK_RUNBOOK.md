@@ -1,6 +1,6 @@
 # Portainer Git stack runbook
 
-This runbook deploys the private Kairix Page Manager on a Linux Docker host while publishing only validated static output to Cloudflare Pages. Public visitors must never connect to Portainer, the Page Manager, its local preview, or its volumes. Cloudflare R2 is not used.
+This runbook deploys the private Kairix Page Manager on a Linux Docker host while publishing only validated static output to Cloudflare Pages or Cloudflare Workers Static Assets. Public visitors must never connect to Portainer, the Page Manager, its local preview, or its volumes. Cloudflare R2 is not used.
 
 ## 1. Git stack settings
 
@@ -40,11 +40,11 @@ The Compose stack creates named volumes. Their Docker-managed host paths vary by
 | `<stack>_kairix-uploads` | `/app/uploads` | Uploaded images, manuals, firmware, installers, and generated bundle ZIPs |
 | `<stack>_kairix-generated-site` | `/app/generated-site` | Last promoted preview under `current` and temporary publish jobs under `.publish-staging` |
 
-Vite's disposable build cache uses `/tmp/kairix-vite-site` on the existing node-writable tmpfs. It is recreated automatically and must not be mounted as persistent storage.
+Vite's disposable build cache uses `/tmp/kairix-vite-site`. Wrangler uses `/tmp/kairix-wrangler/config` and `/tmp/kairix-wrangler/cache`. These paths use the existing node-writable tmpfs, are recreated automatically, and must not be persistent volumes.
 
 The database, uploads, backups, and last generated preview survive image replacement and normal stack redeployment. Publish staging and the live preview share one volume so final promotion is an atomic directory rename. Failed/current job directories are removed in the publish `finally` path and stale `publish-*` directories are removed at application startup.
 
-Generated `site/src/data/content.json` and `site/public/uploads` inside the application container are build inputs reconstructed from SQLite and the uploads volume; they do not require separate persistence. Application logs go to container stdout/stderr. Configuration and Cloudflare credentials belong in Portainer environment/secret storage, not in volumes or Git.
+Each publish writes its exported content JSON only inside the unique `/app/generated-site/.publish-staging/publish-*/input/` job. Public uploads under `site/public/uploads` are reconstructed from SQLite-managed file records and the uploads volume. Neither build input requires separate persistence. Application logs go to container stdout/stderr. Configuration and Cloudflare credentials belong in Portainer environment/secret storage, not in volumes or Git.
 
 Public upload export is allowlisted by the application-managed `files` database records. Generated software bundles are recorded before export, so their nested `bundles/` paths remain included. Unrecorded files, hidden files, editor backups, temporary/partial files, filesystem metadata, symlinks, and special entries are not copied into the public site. Excluded or missing entry counts are written to the publish logs without exposing filesystem paths. Orphaned files remain in the uploads volume until an explicit cleanup workflow is run; publishing never deletes them.
 
@@ -76,6 +76,8 @@ PUBLISH_MAX_FILES=20000
 PUBLISH_MAX_TOTAL_MB=500
 PUBLISH_MAX_FILE_MB=25
 VITE_CACHE_DIR=/tmp/kairix-vite-site
+XDG_CONFIG_HOME=/tmp/kairix-wrangler/config
+XDG_CACHE_HOME=/tmp/kairix-wrangler/cache
 CLOUDFLARE_DEPLOY_TIMEOUT_MS=600000
 CLOUDFLARE_PREFLIGHT_TIMEOUT_MS=15000
 ```
@@ -105,21 +107,38 @@ Deploy and verify:
 
 Expected health is `healthy` after the start period. The admin restarts `unless-stopped`, receives an init process, and has 45 seconds to complete graceful shutdown.
 
-## 5. Second stage: Cloudflare Pages staging
+## 5. Second stage: Cloudflare Workers Static Assets
 
-1. In Cloudflare, create a separate Pages **Direct Upload** staging project. Do not connect it to Git for this workflow.
-2. Create an API token restricted to the correct account with **Pages Write** only.
-3. In Portainer, add `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_PAGES_PROJECT`, `CLOUDFLARE_PAGES_BRANCH`, and `CLOUDFLARE_API_TOKEN` without printing them in logs or committing them.
-4. Set `DEPLOY_PROVIDER=cloudflare-pages`.
-5. Set `PUBLIC_BASE_URL=https://<staging-project>.pages.dev` and set `PUBLIC_SITE_BASE_PATH` to an empty value.
-6. Keep `PUBLIC_HOSTNAME` empty and redeploy the stack.
-7. Confirm the admin container is healthy and diagnostics show the expected provider, project, branch, and credential-ready boolean.
-8. Publish one test site and verify the returned Cloudflare deployment URL and deployment ID when present.
-9. Inspect the public source and browser network requests. Confirm there are no `/api/track`, `/api/contact-submissions`, private hostnames, `/preview/` links, secrets, or requests to the home server.
-10. Verify pages, images, downloads, `mailto:`, `tel:`, support, and marketplace links.
-11. In Cloudflare, identify the previous deployment and verify the rollback control is available. Perform a staging rollback test before production cutover.
+Use these exact Portainer values for the current Worker, retaining the existing private admin/network/volume values:
 
-Wrangler is installed from the repository lockfile in the runtime image and invoked directly with Node using an argument array and `shell: false`; publishing cannot invoke `npx`. The token is passed only in the child-process environment. The application validates the existing Pages project before building, bounds child output, applies timeouts/cancellation, removes structured-output files with the job directory, and promotes the local preview only after deployment succeeds. No inbound Cloudflare access is required.
+```env
+DEPLOY_PROVIDER=cloudflare-workers
+CLOUDFLARE_ACCOUNT_ID=<32-character-account-id>
+CLOUDFLARE_API_TOKEN=<workers-scripts-edit-token>
+CLOUDFLARE_WORKER_NAME=xpress-01
+CLOUDFLARE_DEPLOY_TIMEOUT_MS=600000
+CLOUDFLARE_PREFLIGHT_TIMEOUT_MS=15000
+PUBLIC_BASE_URL=https://xpress-01.jaydenlee-dcm.workers.dev
+PUBLIC_SITE_BASE_PATH=
+PUBLIC_HOSTNAME=
+XDG_CONFIG_HOME=/tmp/kairix-wrangler/config
+XDG_CACHE_HOME=/tmp/kairix-wrangler/cache
+```
+
+Do not change `ADMIN_BASE_URL`, `ADMIN_BIND_IP`, `ADMIN_PORT`, `PREVIEW_BIND_IP`, `PUBLIC_PREVIEW_PORT`, named volumes, `SESSION_SECRET`, or `ENCRYPTION_SECRET`. The private preview remains at its existing LAN URL, such as `http://192.168.0.238:8040/preview/`.
+
+1. Create an account-scoped API token with Workers Scripts Edit and no DNS, R2, Tunnel, or Pages permission unless separately needed.
+2. Save the token only in Portainer, apply the values above, then **Pull and redeploy** without removing volumes.
+3. Confirm the admin container is healthy and diagnostics show `cloudflare-workers`, Worker `xpress-01`, and configured credentials.
+4. Publish once. Preflight lists Workers in the configured account and safely reports whether `xpress-01` already exists; a missing Worker may be created by the authenticated Wrangler deployment.
+5. Verify the result shows **Cloudflare Workers**, `xpress-01`, the public URL, and a Version ID when Wrangler returns one.
+6. Inspect source and browser network requests. Confirm there are no `/preview/`, `/api/track`, `/api/contact-submissions`, private hostnames, secrets, or requests to the home server.
+7. Verify pages, images, downloads, favicon, sitemap, `mailto:`, `tel:`, support, and marketplace links at the domain root.
+8. Confirm the private `/preview/` still serves the promoted last-known-good site.
+
+To retain Pages instead, use `DEPLOY_PROVIDER=cloudflare-pages`, set `CLOUDFLARE_PAGES_PROJECT` and `CLOUDFLARE_PAGES_BRANCH`, and follow the Pages section in `CLOUDFLARE_PAGES_RUNBOOK.md`.
+
+Wrangler is installed from the repository lockfile and invoked directly with Node using an argument array and `shell: false`; publishing cannot invoke `npx`. The token is child-environment-only. Workers deployment uses `wrangler deploy --assets <validated-site> --name xpress-01`, disables autoconfiguration, runs outside the validated asset directory, and writes disposable configuration/cache state only below `/tmp`. Upload failure occurs before atomic local-preview promotion, so it cannot replace the last-known-good site.
 
 ## 6. Production cutover gate
 
@@ -130,12 +149,12 @@ Do not cut production over until all of these are recorded as passing on the Lin
 - Named-volume ownership and write tests pass.
 - Local publishing and preview assets work.
 - Data survives a controlled stack redeploy.
-- Cloudflare staging preflight and Direct Upload work.
+- Cloudflare staging preflight and the selected Pages/Workers upload work.
 - The returned staging URL, public links, and assets work.
 - Public output and network requests contain no private API calls or private hostnames.
 - Secrets are absent from generated output and redacted logs.
-- The Pages token has only the minimum account-level Pages Write permission.
+- The token has only the minimum account-level permission for the selected provider.
 - A staging rollback has been tested.
-- The documented Wrangler/Miniflare/Sharp audit finding has either been cleared by an upstream update or explicitly reviewed and accepted for the staging-to-production decision; do not force a dependency override.
+- Full and production-only npm audits pass.
 
-After production cutover, public users receive only the Cloudflare Pages static site. Keep the Page Manager, Portainer, SQLite, uploads, backups, generated-site volume, and local preview private.
+After production cutover, public users receive only the Cloudflare Pages or Workers static site. Keep the Page Manager, Portainer, SQLite, uploads, backups, generated-site volume, and local preview private.

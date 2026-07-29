@@ -65,6 +65,23 @@ async function readHtmlFiles(root) {
   return files;
 }
 
+async function readPublicText(root) {
+  const text = [];
+  const pending = [root];
+  const textExtensions = new Set([".html", ".css", ".js", ".json", ".xml", ".txt", ".svg"]);
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) pending.push(fullPath);
+      else if (entry.isFile() && textExtensions.has(path.extname(entry.name).toLowerCase())) {
+        text.push(await fs.readFile(fullPath, "utf8"));
+      }
+    }
+  }
+  return text.join("\n");
+}
+
 async function buildVariant(name, sourceData, { basePath, publicBaseUrl, runtimeApiEnabled }) {
   const jobDir = path.join(scratch, `publish-${name}`);
   const contentPath = path.join(jobDir, "input", "content.json");
@@ -102,6 +119,7 @@ async function buildVariant(name, sourceData, { basePath, publicBaseUrl, runtime
   const favicon = await verifyPublicFavicon(outputDir, basePath, "/uploads/customer/banana-favicon.svg");
   const htmlFiles = await readHtmlFiles(outputDir);
   const combined = htmlFiles.map((file) => file.html).join("\n");
+  const publicText = await readPublicText(outputDir);
   for (const value of expectedStrings) {
     if (!combined.includes(value)) throw new Error(`${name} output is missing expected database content: ${value}`);
   }
@@ -116,11 +134,12 @@ async function buildVariant(name, sourceData, { basePath, publicBaseUrl, runtime
     }
   }
   if (runtimeApiEnabled && !combined.includes("/api/track")) throw new Error("Local output is missing local analytics behavior.");
-  if (!runtimeApiEnabled && combined.includes("/api/track")) throw new Error("Cloudflare output contains the private analytics API.");
+  if (!runtimeApiEnabled && publicText.includes("/api/track")) throw new Error("Cloudflare output contains the private analytics API.");
   if (runtimeApiEnabled && !combined.includes("/api/contact-submissions")) throw new Error("Local output is missing the enabled local contact form.");
-  if (!runtimeApiEnabled && combined.includes("/api/contact-submissions")) throw new Error("Cloudflare output contains the private contact API.");
+  if (!runtimeApiEnabled && publicText.includes("/api/contact-submissions")) throw new Error("Cloudflare output contains the private contact API.");
   if (!combined.includes("banana-help@example.test")) throw new Error(`${name} output lost the saved public contact method.`);
-  if (!runtimeApiEnabled && combined.includes("/preview/")) throw new Error("Cloudflare output contains a local /preview/ path.");
+  if (!runtimeApiEnabled && publicText.includes("/preview/")) throw new Error("Cloudflare output contains a local /preview/ path.");
+  if (!runtimeApiEnabled && !publicText.includes(publicBaseUrl)) throw new Error("Cloudflare output is missing the configured root public URL.");
 
   return {
     name,
@@ -195,9 +214,9 @@ try {
     publicBaseUrl: "http://localhost:8080",
     runtimeApiEnabled: true
   }));
-  results.push(await buildVariant("cloudflare-root", exported, {
+  results.push(await buildVariant("cloudflare-workers-root", exported, {
     basePath: "",
-    publicBaseUrl: "https://banana-pages.example.test",
+    publicBaseUrl: "https://xpress-01.jaydenlee-dcm.workers.dev",
     runtimeApiEnabled: false
   }));
   for (const result of results) {

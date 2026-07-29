@@ -39,3 +39,32 @@ test("valid Cloudflare production relationship passes", () => {
     publicHostname: ""
   }), []);
 });
+
+test("Cloudflare Workers production relationship requires HTTPS root output and no public tunnel host", () => {
+  const issues = validateProductionConfiguration({
+    nodeEnv: "production",
+    adminBaseUrl: "https://admin.example.test",
+    publicBaseUrl: "https://xpress-01.example.workers.dev/preview/",
+    publicSiteBasePath: "/preview",
+    deployProvider: "cloudflare-workers",
+    cookieSecure: true,
+    trustProxy: true,
+    publicHostname: "private.example.test"
+  });
+  assert.ok(issues.some((issue) => issue.includes("origin URL without a path")));
+  assert.ok(issues.some((issue) => issue.includes("PUBLIC_SITE_BASE_PATH must be empty")));
+  assert.ok(issues.some((issue) => issue.includes("PUBLIC_HOSTNAME must be empty")));
+});
+
+test("valid Cloudflare Workers production relationship passes", () => {
+  assert.deepEqual(validateProductionConfiguration({
+    nodeEnv: "production",
+    adminBaseUrl: "https://admin.example.test",
+    publicBaseUrl: "https://xpress-01.example.workers.dev",
+    publicSiteBasePath: "",
+    deployProvider: "cloudflare-workers",
+    cookieSecure: true,
+    trustProxy: true,
+    publicHostname: ""
+  }), []);
+});

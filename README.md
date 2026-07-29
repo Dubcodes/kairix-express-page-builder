@@ -5,7 +5,7 @@ A local demo of a low-cost static product support portal builder for AliExpress/
 ## What v1 Does
 
 - First-run setup creates the business/store profile and first Admin user.
-- The admin header uses the configured business name, for example `ABC Electronics Page Manager`.
+- The admin remains clearly identified as Kairix Page Manager while customer branding is applied only to generated public sites.
 - Admin login uses hashed passwords and HTTP-only session cookies.
 - Roles are modeled for Admin, Publisher, Editor, File Manager, Analytics Viewer, and Read Only.
 - Admins can create team invites, temporary support access links, approval-required users, and password reset links.
@@ -17,7 +17,7 @@ A local demo of a low-cost static product support portal builder for AliExpress/
 - Publish exports structured content to Astro and builds static files into `generated-site`.
 - Public pages are static and do not need the SQLite database at runtime.
 - The Page Manager includes CSRF protection for authenticated write requests, audit events for important admin actions, and basic local analytics.
-- Local preview and Cloudflare Pages Direct Upload deploy providers are available. Cloudflare R2 remains intentionally inactive.
+- Local preview, Cloudflare Pages Direct Upload, and Cloudflare Workers Static Assets deploy providers are available. Cloudflare R2 remains intentionally inactive.
 
 ## Project Structure
 
@@ -61,7 +61,7 @@ The generated public site is base-path aware. Local Page Manager preview uses:
 PUBLIC_SITE_BASE_PATH=/preview
 ```
 
-That keeps generated links such as Home, Downloads, Support, product pages, category pages, and version-history pages under `/preview/` when served by the admin app. For a Cloudflare Pages root deployment, use an empty value:
+That keeps generated links such as Home, Downloads, Support, product pages, category pages, and version-history pages under `/preview/` when served by the admin app. For Cloudflare Pages or Workers Static Assets at the domain root, use an empty value:
 
 ```env
 PUBLIC_SITE_BASE_PATH=
@@ -151,7 +151,19 @@ Volumes:
 
 Local mode (`DEPLOY_PROVIDER=local`) updates the private generated-site preview. Use `PUBLIC_SITE_BASE_PATH=/preview` for the built-in Page Manager preview. Compose binds the optional nginx preview to `127.0.0.1` so it is not a production public endpoint.
 
-Cloudflare mode (`DEPLOY_PROVIDER=cloudflare-pages`) builds and validates a root static site, performs a non-interactive existing-project preflight, deploys with the pinned installed Wrangler CLI, and then atomically updates the local preview. Set `PUBLIC_SITE_BASE_PATH=` and leave `PUBLIC_HOSTNAME=` empty. Public visitors must use Cloudflare Pages; do not create a public Tunnel hostname to the Page Manager or preview.
+Cloudflare Pages mode (`DEPLOY_PROVIDER=cloudflare-pages`) uploads the validated root site to an existing Direct Upload project. Cloudflare Workers mode (`DEPLOY_PROVIDER=cloudflare-workers`) deploys the same validated root site as official Workers Static Assets using `wrangler deploy --assets`. Both use the exact-pinned installed Wrangler CLI non-interactively, authenticate only through server environment variables, and atomically update the private last-known-good preview only after deployment succeeds. Set `PUBLIC_SITE_BASE_PATH=` and leave `PUBLIC_HOSTNAME=` empty.
+
+For the current Worker:
+
+```env
+DEPLOY_PROVIDER=cloudflare-workers
+CLOUDFLARE_WORKER_NAME=xpress-01
+PUBLIC_BASE_URL=https://xpress-01.jaydenlee-dcm.workers.dev
+PUBLIC_SITE_BASE_PATH=
+PUBLIC_HOSTNAME=
+```
+
+The Workers provider does not need Git integration, Wrangler login, a Docker socket, inbound Cloudflare access, or a Cloudflare Tunnel.
 
 This deployment keeps the Page Manager LAN-only and does not require an inbound Cloudflare Tunnel. If a private LAN HTTPS reverse proxy is used, protect it with access controls and set `TRUST_PROXY=true`, `COOKIE_SECURE=true`, and the final HTTPS `ADMIN_BASE_URL`. Production secrets must be different random values of at least 32 characters.
 
@@ -171,7 +183,7 @@ Do not expose Portainer publicly. Keep `ENABLE_SAMPLE_DATA_TOOLS=false` in produ
 8. Create sample/demo content manually, import safe demo content, or temporarily enable `ENABLE_SAMPLE_DATA_TOOLS=true` and use "Add demo sample batch".
 9. Click Publish.
 10. Test `/preview/` on the admin URL or localhost-only `public-preview` as an operator.
-11. In Cloudflare mode, share only the Cloudflare Pages/custom-domain URL with clients.
+11. In Cloudflare mode, share only the Cloudflare Pages, Workers, or custom-domain URL with clients.
 12. If sharing admin access, create a temporary demo user and remove or disable it afterward.
 
 Warnings:
@@ -239,8 +251,8 @@ Settings -> Marketplace Integrations includes an AliExpress connection foundatio
 - The public site is generated static output and has no database credentials.
 - `.env.example` documents variable names only; real secrets must stay in private environment/Portainer secret configuration.
 
-## Cloudflare Pages and deferred R2
+## Cloudflare deployment and deferred R2
 
-Cloudflare Pages Direct Upload is implemented through `CloudflarePagesDeployProvider` and the real Publish workflow. Wrangler is exact-pinned as a runtime dependency; publish never downloads a CLI dynamically. Cloudflare credentials are server environment values and never browser-editable settings.
+Cloudflare Pages Direct Upload is implemented through `CloudflarePagesDeployProvider`. Workers Static Assets is implemented through `CloudflareWorkersDeployProvider` with the official `wrangler deploy --assets <validated-directory> --name <worker>` mechanism. Wrangler is exact-pinned as a runtime dependency; publish never downloads a CLI dynamically. Cloudflare credentials are server environment values and never browser-editable settings.
 
-Cloudflare R2 is deliberately deferred. `R2StorageProvider` is an inactive placeholder; uploads, downloads, and generated Software Bundle ZIPs continue to be packaged into the validated Pages deployment.
+Cloudflare R2 is deliberately deferred. `R2StorageProvider` is an inactive placeholder; uploads, downloads, and generated Software Bundle ZIPs continue to be packaged into the validated static deployment.

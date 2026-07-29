@@ -54,8 +54,20 @@ if (!logicalLines.some((line) => /^USER\s+node$/i.test(line))) {
 if (!logicalLines.some((line) => /^ENV\s+VITE_CACHE_DIR=\/tmp\/kairix-vite-site$/i.test(line))) {
   throw new Error("Docker runtime must place the production Vite cache under /tmp.");
 }
+if (!logicalLines.some((line) => /^ENV\s+XDG_CONFIG_HOME=\/tmp\/kairix-wrangler\/config$/i.test(line))) {
+  throw new Error("Docker runtime must place Wrangler configuration under /tmp.");
+}
+if (!logicalLines.some((line) => /^ENV\s+XDG_CACHE_HOME=\/tmp\/kairix-wrangler\/cache$/i.test(line))) {
+  throw new Error("Docker runtime must place Wrangler cache files under /tmp.");
+}
 if (!/VITE_CACHE_DIR:\s*\$\{VITE_CACHE_DIR:-\/tmp\/kairix-vite-site\}/.test(compose)) {
   throw new Error("Compose must default VITE_CACHE_DIR to the ephemeral /tmp cache.");
+}
+if (!/XDG_CONFIG_HOME:\s*\$\{XDG_CONFIG_HOME:-\/tmp\/kairix-wrangler\/config\}/.test(compose)) {
+  throw new Error("Compose must default Wrangler configuration to /tmp.");
+}
+if (!/XDG_CACHE_HOME:\s*\$\{XDG_CACHE_HOME:-\/tmp\/kairix-wrangler\/cache\}/.test(compose)) {
+  throw new Error("Compose must default Wrangler cache files to /tmp.");
 }
 if (!/\/tmp:uid=1000,gid=1000,mode=1777/.test(compose)) {
   throw new Error("Compose must retain the node-writable /tmp tmpfs.");

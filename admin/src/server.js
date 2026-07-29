@@ -736,9 +736,14 @@ app.get("/api/diagnostics", requireAdmin, (req, res) => {
     trustProxy: config.trustProxy,
     sampleDataToolsEnabled: config.sampleDataToolsEnabled,
     deployProvider: config.deployProvider,
-    cloudflareProjectConfigured: Boolean(config.cloudflareAccountId && config.cloudflarePagesProject && config.cloudflareApiToken),
+    cloudflareProjectConfigured: Boolean(
+      config.cloudflareAccountId
+      && config.cloudflareApiToken
+      && (config.deployProvider === "cloudflare-workers" ? config.cloudflareWorkerName : config.cloudflarePagesProject)
+    ),
     cloudflarePagesProject: config.cloudflarePagesProject,
     cloudflarePagesBranch: config.cloudflarePagesBranch,
+    cloudflareWorkerName: config.cloudflareWorkerName,
     publishInProgress: publishStatus(),
     productionSafetyIssues: config.productionSafetyIssues,
     maxUploadMb: config.maxUploadMb,
@@ -1714,12 +1719,17 @@ app.post("/api/publish", requirePermission("publish"), asyncRoute(async (req, re
   const result = await publishSite(req.user.id);
   audit(req, "publish_success", {
     entityType: "publish",
-    message: result.provider === "cloudflare-pages" ? "Static site deployed to Cloudflare Pages" : "Static site published to local preview",
+    message: result.provider === "cloudflare-workers"
+      ? "Static site deployed to Cloudflare Workers"
+      : result.provider === "cloudflare-pages"
+        ? "Static site deployed to Cloudflare Pages"
+        : "Static site published to local preview",
     metadata: {
       jobId: result.jobId,
       provider: result.provider,
       deploymentId: result.deploymentId || null,
       deploymentUrl: result.deploymentUrl || null,
+      workerName: result.workerName || null,
       generatedBundles: result.generatedBundles || []
     }
   });
@@ -1811,6 +1821,7 @@ app.get("/api/publish/preview", requirePermission("publish"), (_req, res) => {
     deployProvider: config.deployProvider,
     cloudflarePagesProject: config.cloudflarePagesProject,
     cloudflarePagesBranch: config.cloudflarePagesBranch,
+    cloudflareWorkerName: config.cloudflareWorkerName,
     publishInProgress: publishStatus(),
     publicPreviewUrl: publicPreviewUrl("/"),
     hasPublishedSite: hasPublishedSite(),

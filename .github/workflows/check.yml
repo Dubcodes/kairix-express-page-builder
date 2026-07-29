@@ -27,6 +27,7 @@ jobs:
         run: |
           node --check admin/src/config.js
           node --check admin/src/server.js
+          node --check admin/src/providers/deploy.js
           node --check admin/src/services/publish.js
           node --check admin/src/services/exportData.js
           node --check admin/src/public/assets/admin.js
