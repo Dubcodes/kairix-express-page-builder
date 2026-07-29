@@ -41,6 +41,9 @@ async function inspectManagedFile(root, storedName) {
     if (index === segments.length - 1 && !stat.isFile()) {
       throw new Error(`Managed upload is not a regular file: ${storedName}`);
     }
+    if (index === segments.length - 1 && stat.nlink !== 1) {
+      throw new Error(`Managed upload hard link rejected: ${storedName}`);
+    }
   }
   return { sourcePath: current };
 }

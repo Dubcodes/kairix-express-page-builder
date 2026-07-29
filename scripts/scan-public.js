@@ -26,7 +26,21 @@ const checks = [
 if (process.env.PUBLIC_SCAN_STATIC_ONLY === "true") {
   checks.push(
     { label: "private analytics API dependency", pattern: /\/api\/track\b/ },
-    { label: "private contact API dependency", pattern: /\/api\/contact-submissions\b/ }
+    { label: "private contact API dependency", pattern: /\/api\/contact-submissions\b/ },
+    { label: "Page Manager API route", pattern: /(?:["'(=:\s]|^)\/api\// },
+    { label: "localhost reference", pattern: /\b(?:localhost|127\.0\.0\.1)\b/i },
+    { label: "RFC1918 10/8 address", pattern: /\b10(?:\.\d{1,3}){3}\b/ },
+    { label: "RFC1918 172.16/12 address", pattern: /\b172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}\b/ },
+    { label: "RFC1918 192.168/16 address", pattern: /\b192\.168(?:\.\d{1,3}){2}\b/ },
+    { label: "private Page Manager port", pattern: /(?::|%3A)(?:8040|4321)\b/i },
+    { label: "local preview path", pattern: /\/preview\//i },
+    { label: "Portainer reference", pattern: /\bPortainer\b/i },
+    { label: "Docker reference", pattern: /\bDocker\b/i },
+    { label: "Docker service hostname", pattern: /\b(?:https?:\/\/)?(?:admin|public-preview):\d+\b/i },
+    { label: "container filesystem path", pattern: /(?:^|["'\s])\/app\/(?:data|uploads|generated-site|node_modules)\b/i },
+    { label: "secret-file path", pattern: /\/run\/kairix-secrets\b/i },
+    { label: "SQLite path", pattern: /(?:^|["'\s])[^"'\s]*\.(?:sqlite|sqlite3|db)(?:-(?:wal|shm))?\b/i },
+    { label: "Windows local filesystem path", pattern: /\b[A-Z]:\\(?:Users|projects|app)\\/i }
   );
 }
 

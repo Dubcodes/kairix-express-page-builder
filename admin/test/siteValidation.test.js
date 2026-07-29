@@ -57,6 +57,36 @@ test("forbidden files, source maps, and sensitive content are rejected", async (
   }
 });
 
+test("configured secret values are rejected even without recognisable variable names", async () => {
+  const { approvedRoot, root } = await fixture();
+  const secret = "opaque-value-1234567890-without-a-label";
+  try {
+    await fs.writeFile(path.join(root, "content.json"), JSON.stringify({ text: secret }));
+    await assert.rejects(
+      validateGeneratedSite(root, { approvedRoot, sensitiveValues: [secret] }),
+      /Configured private value detected/
+    );
+  } finally {
+    await fs.remove(approvedRoot);
+  }
+});
+
+test("configured private values inside downloadable ZIPs are rejected", async () => {
+  const { approvedRoot, root } = await fixture();
+  const privateOrigin = "https://client-name.manager.example.test";
+  try {
+    const archive = new JSZip();
+    archive.file("notes.txt", `Do not publish ${privateOrigin}`);
+    await fs.writeFile(path.join(root, "manual.zip"), await archive.generateAsync({ type: "nodebuffer" }));
+    await assert.rejects(
+      validateGeneratedSite(root, { approvedRoot, sensitiveValues: [privateOrigin] }),
+      /Private material inside ZIP rejected/
+    );
+  } finally {
+    await fs.remove(approvedRoot);
+  }
+});
+
 test("file-count, per-file, and total-size limits are enforced", async () => {
   const { approvedRoot, root } = await fixture();
   try {

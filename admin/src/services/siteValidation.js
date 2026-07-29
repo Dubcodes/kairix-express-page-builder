@@ -44,7 +44,7 @@ export function isPathInside(parent, candidate) {
   return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-async function validateZipArchive(fullPath, relativePath) {
+async function validateZipArchive(fullPath, relativePath, sensitiveValues = []) {
   let archive;
   try {
     archive = await JSZip.loadAsync(await fs.readFile(fullPath));
@@ -65,8 +65,18 @@ async function validateZipArchive(fullPath, relativePath) {
     }
     const permissions = typeof entry.unixPermissions === "string" ? Number.parseInt(entry.unixPermissions, 8) : Number(entry.unixPermissions || 0);
     if ((permissions & 0o170000) === 0o120000) throw new SiteValidationError(`Symlink inside ZIP rejected: ${relativePath}`);
-    uncompressedBytes += Number(entry?._data?.uncompressedSize || 0);
+    const entryBytes = Number(entry?._data?.uncompressedSize || 0);
+    uncompressedBytes += entryBytes;
     if (uncompressedBytes > 500 * 1024 * 1024) throw new SiteValidationError(`ZIP archive expands beyond the safety limit: ${relativePath}`);
+    if (!entry.dir && entryBytes <= 5 * 1024 * 1024 && textExtensions.has(path.extname(normalized).toLowerCase())) {
+      const content = await entry.async("string");
+      if (
+        sensitiveContentPatterns.some((pattern) => pattern.test(content))
+        || sensitiveValues.some((value) => String(value || "").length >= 16 && content.includes(String(value)))
+      ) {
+        throw new SiteValidationError(`Private material inside ZIP rejected: ${relativePath}`);
+      }
+    }
   }
 }
 
@@ -90,7 +100,8 @@ export async function validateGeneratedSite(root, {
   approvedRoot,
   maxFiles = 20_000,
   maxTotalBytes = 500 * 1024 * 1024,
-  maxFileBytes = 100 * 1024 * 1024
+  maxFileBytes = 100 * 1024 * 1024,
+  sensitiveValues = []
 } = {}) {
   if (!await fs.pathExists(root)) throw new SiteValidationError("Generated output directory does not exist.");
   await assertSafeStagingPath(root, approvedRoot);
@@ -134,8 +145,11 @@ export async function validateGeneratedSite(root, {
         if (sensitiveContentPatterns.some((pattern) => pattern.test(content))) {
           throw new SiteValidationError(`Sensitive material detected in generated file: ${relative}`);
         }
+        if (sensitiveValues.some((value) => String(value || "").length >= 16 && content.includes(String(value)))) {
+          throw new SiteValidationError(`Configured private value detected in generated file: ${relative}`);
+        }
       }
-      if (extension === ".zip") await validateZipArchive(fullPath, relative);
+      if (extension === ".zip") await validateZipArchive(fullPath, relative, sensitiveValues);
       files.push(relative);
     }
   }

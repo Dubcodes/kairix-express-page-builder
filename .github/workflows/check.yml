@@ -30,15 +30,29 @@ jobs:
           node --check admin/src/providers/deploy.js
           node --check admin/src/services/publish.js
           node --check admin/src/services/exportData.js
+          node --check admin/src/services/secrets.js
+          node --check admin/src/services/requestSecurity.js
+          node --check admin/src/services/processEnvironment.js
+          node --check admin/src/services/uploadValidation.js
           node --check admin/src/public/assets/admin.js
+          node --check admin/src/public/assets/invite.js
+          node --check admin/src/public/assets/reset.js
           node --check site/src/lib/contentLoader.js
           node --check scripts/check-live-content-build.mjs
+          node --check scripts/smoke-server.mjs
 
       - name: Build and check
         run: npm run check
 
       - name: Public output scan
-        run: npm run scan:public
+        run: |
+          PUBLIC_SCAN_ROOT=.cache/live-content-build/cloudflare-workers-root \
+          PUBLIC_SCAN_BASE_PATH= \
+          PUBLIC_SCAN_STATIC_ONLY=true \
+          npm run scan:public
+          PUBLIC_SCAN_ROOT=.cache/live-content-build/cloudflare-workers-root \
+          PUBLIC_SCAN_BASE_PATH= \
+          npm run check:links
 
       - name: Dependency audit
         run: npm audit --omit=dev

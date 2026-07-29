@@ -19,7 +19,7 @@ function hashToken(token) {
 export function createSession(userId) {
   const token = crypto.randomBytes(32).toString("base64url");
   const tokenHash = hashToken(token);
-  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString();
+  const expiresAt = new Date(Date.now() + config.sessionLifetimeMs).toISOString();
   db.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)").run(tokenHash, userId, expiresAt);
   return { token, expiresAt };
 }
@@ -35,7 +35,7 @@ export function sessionCookieOptions() {
     sameSite: "lax",
     secure: config.cookieSecure,
     path: "/",
-    maxAge: 1000 * 60 * 60 * 12
+    maxAge: config.sessionLifetimeMs
   };
 }
 

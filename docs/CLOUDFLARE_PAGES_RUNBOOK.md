@@ -34,14 +34,16 @@ The installed Wrangler CLI is invoked directly, with autoconfiguration disabled 
 
 ## 2. Create the least-privilege token
 
-Create a Cloudflare API token scoped to the correct account:
+Use a user-owned custom Cloudflare API token scoped to the correct account. This preserves the currently verified Workers publishing model; account-owned tokens were rejected by the Workers deployment API in this installation.
 
 - Pages provider: **Pages Write**.
 - Workers provider: **Workers Scripts Edit** (Cloudflare may display this as Workers Scripts Write/Edit).
 
-Do not add DNS, R2, Tunnel, Account Settings, or API-token-management permissions. Cloudflare describes token creation at [Create API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
+Do not use the Global API Key. Do not add R2, KV, Pages, Workers Routes, Containers, Observability, Workers Builds, Tunnel, DNS, or unrelated product permissions. If Cloudflare changes the permission required by Wrangler, verify it with a staging token before expanding scope. Cloudflare describes token creation at [Create API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/).
 
-Copy the token once into Portainer's secret environment configuration. Never put it in Git, a browser-editable Page Manager setting, a Dockerfile, a Compose file value, screenshots, tickets, or shell history.
+Enter the token once into the client-specific read-only secret file. The legacy Portainer environment-value option remains supported, but file-backed storage is recommended for dedicated deployments. Never put the token in Git, a browser-editable Page Manager setting, a Dockerfile, a Compose file value, screenshots, tickets, or shell history.
+
+The values below preserve the existing `xpress-01` target. New independent client instances normally receive a different Worker, token file, public origin, and account configuration. Follow [MULTI_INSTANCE_CLIENT_DEPLOYMENT.md](MULTI_INSTANCE_CLIENT_DEPLOYMENT.md); do not point unrelated clients at one Worker.
 
 ## 3. Obtain the account ID
 
@@ -59,7 +61,8 @@ Set these values on the `admin` service or Portainer stack. Values below are des
 | `CLOUDFLARE_PAGES_PROJECT` | Pages project; empty/unused for Workers |
 | `CLOUDFLARE_PAGES_BRANCH` | Pages production branch; empty/unused for Workers |
 | `CLOUDFLARE_WORKER_NAME` | `xpress-01` for Workers; empty/unused for Pages |
-| `CLOUDFLARE_API_TOKEN` | `<least-privilege-token-for-selected-provider>` |
+| `CLOUDFLARE_API_TOKEN` | legacy value option; leave empty when using the file |
+| `CLOUDFLARE_API_TOKEN_FILE` | `/run/kairix-secrets/cloudflare-api-token` recommended |
 | `CLOUDFLARE_DEPLOY_TIMEOUT_MS` | `600000` initially |
 | `CLOUDFLARE_PREFLIGHT_TIMEOUT_MS` | `15000` initially |
 | `PUBLIC_BASE_URL` | selected Cloudflare origin; Workers uses `https://xpress-01.jaydenlee-dcm.workers.dev` |
@@ -67,7 +70,7 @@ Set these values on the `admin` service or Portainer stack. Values below are des
 | `ADMIN_BASE_URL` | `https://<private-admin-hostname>` |
 | `ADMIN_HOSTNAME` | `<private-admin-hostname>` when host guarding is wanted |
 | `PUBLIC_HOSTNAME` | empty; Cloudflare must not route public traffic to this server |
-| `TRUST_PROXY` | `true` only when the private admin is behind a trusted LAN HTTPS reverse proxy |
+| `TRUST_PROXY` | `true` for the dedicated host `cloudflared` reverse proxy |
 | `COOKIE_SECURE` | `true` for HTTPS admin access |
 | `SESSION_SECRET` | `<different-random-value-at-least-32-characters>` |
 | `ENCRYPTION_SECRET` | `<different-random-value-at-least-32-characters>` |
@@ -83,7 +86,8 @@ For the current Worker, the exact provider-specific Portainer values are:
 ```env
 DEPLOY_PROVIDER=cloudflare-workers
 CLOUDFLARE_ACCOUNT_ID=<32-character-account-id>
-CLOUDFLARE_API_TOKEN=<workers-scripts-edit-token>
+CLOUDFLARE_API_TOKEN=
+CLOUDFLARE_API_TOKEN_FILE=/run/kairix-secrets/cloudflare-api-token
 CLOUDFLARE_WORKER_NAME=xpress-01
 CLOUDFLARE_DEPLOY_TIMEOUT_MS=600000
 CLOUDFLARE_PREFLIGHT_TIMEOUT_MS=15000
@@ -96,7 +100,7 @@ XDG_CACHE_HOME=/tmp/kairix-wrangler/cache
 
 Compose supplies `GENERATED_SITE_DIR=/app/generated-site/current` and `PUBLIC_BUILD_TEMP_DIR=/app/generated-site/.publish-staging`. Both are on the same volume so the validated local preview can be promoted by directory rename. Do not point either path outside `/app` or at a symlink.
 
-The `public-preview` port is bound to `PREVIEW_BIND_IP`, which defaults to `127.0.0.1`. Keep the default unless a LAN-only standalone preview is specifically required. It is an operator preview, not the production website.
+The `public-preview` port is bound to `PREVIEW_BIND_IP=127.0.0.1`. Production rejects an external preview bind. It is an owner-only operator preview, not the production website and not a Tunnel target.
 
 ## 5. Test local publishing first
 
@@ -140,8 +144,8 @@ The local generated preview is independent of a Cloudflare rollback. A later Pag
 
 To rotate the token:
 
-1. Create a new least-privilege token for the selected provider.
-2. Replace only `CLOUDFLARE_API_TOKEN` in Portainer and restart the admin container.
+1. Create a new least-privilege user-owned token for the selected provider.
+2. Atomically replace the token file (or legacy `CLOUDFLARE_API_TOKEN`) and restart the admin container.
 3. Confirm preflight with one deliberate publish.
 4. Revoke the old token in Cloudflare.
 

@@ -121,3 +121,27 @@ test("unmanaged symlinks are excluded while database-referenced symlinks are rej
     await fs.remove(temp);
   }
 });
+
+test("database-referenced hard links are rejected", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "kairix-storage-hardlink-"));
+  const output = path.join(root, "public");
+  const source = path.join(root, "source.txt");
+  const linked = path.join(root, "linked.txt");
+  await fs.writeFile(source, "same inode");
+  try {
+    await fs.link(source, linked);
+  } catch (error) {
+    if (["EPERM", "ENOTSUP", "EACCES"].includes(error.code)) {
+      t.skip(`hard links unavailable: ${error.code}`);
+      await fs.remove(root);
+      return;
+    }
+    throw error;
+  }
+  const provider = new LocalStorageProvider(root);
+  await assert.rejects(
+    provider.copyToPublic(output, [{ id: 1, stored_name: "linked.txt" }]),
+    /hard link rejected/i
+  );
+  await fs.remove(root);
+});

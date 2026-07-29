@@ -13,6 +13,7 @@ const publicBaseUrl = values.url || (provider === "local" ? "http://localhost:80
 const outputDir = path.resolve(values.out || `.cache/verify-${provider}`);
 const jobDir = path.resolve(values.job || `.cache/static-variant-${provider}-${process.pid}`);
 const contentPath = path.join(jobDir, "input", "content.json");
+const publicDir = path.join(jobDir, "public");
 
 process.env.NODE_ENV = "production";
 process.env.DEPLOY_PROVIDER = provider;
@@ -20,6 +21,7 @@ process.env.PUBLIC_SITE_BASE_PATH = basePath;
 process.env.PUBLIC_BASE_URL = publicBaseUrl;
 process.env.ASTRO_OUT_DIR = outputDir;
 process.env.ASTRO_WORK_DIR = jobDir;
+process.env.ASTRO_PUBLIC_DIR = publicDir;
 process.env.KAIRIX_CONTENT_ROOT = jobDir;
 process.env.KAIRIX_CONTENT_PATH = contentPath;
 process.env.KAIRIX_USE_SAMPLE_CONTENT = "false";
@@ -46,7 +48,7 @@ const data = await buildExportData();
 try {
   await fs.outputJson(contentPath, data, { spaces: 2 });
   const managedFiles = db.prepare("SELECT id, stored_name FROM files ORDER BY id").all();
-  await storageProvider.copyToPublic(path.join(config.projectRoot, "site", "public", "uploads"), managedFiles);
+  await storageProvider.copyToPublic(path.join(publicDir, "uploads"), managedFiles);
   await fs.emptyDir(outputDir);
   const result = await runProcess(process.execPath, [path.join(config.projectRoot, "site", "scripts", "astro.mjs"), "build"], {
     cwd: config.projectRoot,

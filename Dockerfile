@@ -21,7 +21,8 @@ WORKDIR /app
 COPY --from=dependencies --chown=node:node /app/ /app/
 COPY --chown=node:node . .
 
-RUN mkdir -p /app/data/backups /app/uploads /app/generated-site/current /app/generated-site/.publish-staging /app/site/src/data /app/site/public/uploads \
+RUN mkdir -p /app/data/backups /app/uploads /app/generated-site/current /app/generated-site/.publish-staging /app/site/src/data /app/site/public/uploads /run/kairix-secrets \
+  && chmod 0555 /run/kairix-secrets \
   && chown -R node:node /app/data /app/uploads /app/generated-site /app/site/src/data /app/site/public/uploads
 
 ENV NODE_ENV=production
@@ -29,6 +30,8 @@ ENV PORT=8080
 ENV VITE_CACHE_DIR=/tmp/kairix-vite-site
 ENV XDG_CONFIG_HOME=/tmp/kairix-wrangler/config
 ENV XDG_CACHE_HOME=/tmp/kairix-wrangler/cache
+ENV HOME=/tmp/kairix-home
+ENV NPM_CONFIG_CACHE=/tmp/kairix-npm
 
 USER node
 

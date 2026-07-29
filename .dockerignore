@@ -8,6 +8,9 @@ site/node_modules
 .cache
 .env
 .env.*
+secrets
+secrets/**
+*.secret
 data
 uploads
 generated-site

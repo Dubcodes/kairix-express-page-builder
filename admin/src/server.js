@@ -34,6 +34,12 @@ import { encryptSecret, decryptSecret } from "./services/cryptoBox.js";
 import { buildAuthUrl, exchangeCodeForToken, fetchProductList, normalizeAliExpressProduct, testConnection } from "./services/aliexpress.js";
 import { createBackup, inspectBackup, listBackups } from "./services/backups.js";
 import { parseCsv, toCsv } from "./services/csv.js";
+import { uploadContentMatchesExtension } from "./services/uploadValidation.js";
+import {
+  isAllowedRequestHostname,
+  isAllowedRequestOrigin,
+  normalizeHostname
+} from "./services/requestSecurity.js";
 
 const app = express();
 await storageProvider.ensureReady();
@@ -42,7 +48,11 @@ for (const dir of [config.uploadsDir, config.generatedSiteDir, config.generatedS
 }
 await cleanupPublishTemp();
 
-if (config.trustProxy) app.set("trust proxy", 1);
+if (config.trustProxy) {
+  // The dedicated deployment accepts proxy metadata only from loopback or
+  // private-link peers (cloudflared on the host through Docker's bridge).
+  app.set("trust proxy", ["loopback", "linklocal", "uniquelocal"]);
+}
 
 function appVersion() {
   try {
@@ -55,8 +65,30 @@ function appVersion() {
 
 app.use(helmet({
   contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false
+  crossOriginEmbedderPolicy: false,
+  strictTransportSecurity: false,
+  referrerPolicy: { policy: "no-referrer" }
 }));
+const adminContentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+function setAdminDocumentHeaders(res) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Content-Security-Policy", adminContentSecurityPolicy);
+}
+app.use((req, res, next) => {
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+  if (
+    req.path.startsWith("/api/")
+    || ["/", "/index.html", "/invite.html", "/reset.html"].includes(req.path)
+  ) {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+  }
+  if (["/", "/index.html", "/invite.html", "/reset.html"].includes(req.path)) {
+    setAdminDocumentHeaders(res);
+  }
+  next();
+});
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -87,6 +119,27 @@ const setupLimiter = rateLimit({
 const publicWriteLimiter = rateLimit({
   windowMs: 60 * 1000,
   limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const publishLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const sensitiveOperationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -141,7 +194,12 @@ function getOrCreateCsrf(req, res) {
 
 function csrfProtection(req, res, next) {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
-  if (["/api/login", "/api/setup", "/api/invites/accept", "/api/track", "/api/contact-submissions"].includes(req.path)) return next();
+  const publicRuntimeWrite = ["/api/track", "/api/contact-submissions"].includes(req.path);
+  const source = req.get("origin") || req.get("referer");
+  if (!publicRuntimeWrite && !isAllowedRequestOrigin(source, config.adminBaseUrl)) {
+    return res.status(403).json({ error: "Request origin is not allowed" });
+  }
+  if (["/api/login", "/api/setup", "/api/invites/accept", "/api/password-reset/complete", "/api/track", "/api/contact-submissions"].includes(req.path)) return next();
   if (!req.user) return next();
   const cookieToken = req.cookies?.kairix_csrf;
   const headerToken = req.get("x-csrf-token");
@@ -164,8 +222,8 @@ function audit(req, eventType, { entityType = null, entityId = null, message = "
     entityId,
     message,
     JSON.stringify(metadata || {}),
-    req.ip || "",
-    req.get("user-agent") || ""
+    cleanText(req.ip || "").slice(0, 64),
+    cleanText(req.get("user-agent") || "").slice(0, 512)
   );
 }
 
@@ -204,17 +262,8 @@ function publicPreviewUrl(pathname = "/") {
   return `${origin}${fullPath.endsWith("/") ? fullPath : `${fullPath}/`}`;
 }
 
-function normalizeHostname(value = "") {
-  const first = String(value || "").split(",")[0].trim().toLowerCase();
-  if (!first) return "";
-  const withoutProtocol = first.replace(/^https?:\/\//, "");
-  if (withoutProtocol.startsWith("[")) return withoutProtocol.slice(1, withoutProtocol.indexOf("]"));
-  return withoutProtocol.split(":")[0];
-}
-
 function requestHostname(req) {
-  const forwardedHost = config.trustProxy ? req.get("x-forwarded-host") : "";
-  return normalizeHostname(forwardedHost || req.get("host") || req.hostname || "");
+  return normalizeHostname(req.hostname || req.get("host") || "");
 }
 
 function publicHostModeEnabled() {
@@ -240,6 +289,12 @@ function publicHostnameGuard(req, res, next) {
   if (req.path === "/" || req.path === "") return res.redirect(302, "/preview/");
   if (req.path === "/healthz" || req.path === "/favicon.ico" || req.path === "/preview" || req.path.startsWith("/preview/") || req.path.startsWith("/uploads/")) return next();
   return publicSafeNotFound(req, res);
+}
+
+function adminHostnameGuard(req, res, next) {
+  if (isAllowedRequestHostname(requestHostname(req), config)) return next();
+  if (req.path === "/healthz" && new Set(["localhost", "127.0.0.1", "::1"]).has(requestHostname(req))) return next();
+  return res.status(421).json({ error: "Misdirected request" });
 }
 
 function hasPublishedSite() {
@@ -374,33 +429,6 @@ function fileRecord(row) {
 
 function hashFile(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
-}
-
-function uploadContentMatchesExtension(file) {
-  const ext = path.extname(file.originalname).toLowerCase();
-  const buffer = fs.readFileSync(file.path);
-  const starts = (...bytes) => bytes.every((byte, index) => buffer[index] === byte);
-  if ([".bin", ".hex", ".uf2"].includes(ext)) return true;
-  if (ext === ".jpg" || ext === ".jpeg") return starts(0xff, 0xd8, 0xff);
-  if (ext === ".png") return starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
-  if (ext === ".ico") return starts(0x00, 0x00, 0x01, 0x00);
-  if (ext === ".gif") return ["GIF87a", "GIF89a"].includes(buffer.subarray(0, 6).toString("ascii"));
-  if (ext === ".webp") return buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
-  if (ext === ".pdf") return buffer.subarray(0, 5).toString("ascii") === "%PDF-";
-  if (ext === ".zip") return starts(0x50, 0x4b) && [0x03, 0x05, 0x07].includes(buffer[2]) && [0x04, 0x06, 0x08].includes(buffer[3]);
-  if (ext === ".exe") return starts(0x4d, 0x5a);
-  if (ext === ".msi") return starts(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1);
-  if (ext === ".pkg") return buffer.subarray(0, 4).toString("ascii") === "xar!";
-  if (ext === ".dmg") return buffer.length >= 512 && buffer.subarray(buffer.length - 512, buffer.length - 508).toString("ascii") === "koly";
-  if (ext === ".txt") return !buffer.includes(0);
-  if (ext === ".svg") {
-    const text = buffer.toString("utf8").replace(/^\uFEFF/, "").trim();
-    return /<svg\b/i.test(text)
-      && !/<(?:script|foreignObject|iframe|object|embed)\b/i.test(text)
-      && !/\son[a-z]+\s*=/i.test(text)
-      && !/(?:javascript:|data:text\/html|<!DOCTYPE|<!ENTITY)/i.test(text);
-  }
-  return false;
 }
 
 function removeUploadedTempFile(filePath) {
@@ -608,6 +636,7 @@ app.get("/healthz", (_req, res) => {
   });
 });
 
+app.use(adminHostnameGuard);
 app.use(publicHostnameGuard);
 
 app.get("/api/setup/status", (_req, res) => {
@@ -664,16 +693,16 @@ app.post("/api/login", loginLimiter, asyncRoute(async (req, res) => {
   }
   if (user.status === "disabled") {
     audit(req, "login_rejected", { entityType: "user", entityId: user.id, message: "Disabled user login rejected" });
-    return res.status(403).json({ error: "This user is disabled" });
+    return res.status(401).json({ error: "Invalid username or password" });
   }
   if (user.status === "pending") {
     audit(req, "login_rejected", { entityType: "user", entityId: user.id, message: "Pending user login rejected" });
-    return res.status(403).json({ error: "This user is pending approval" });
+    return res.status(401).json({ error: "Invalid username or password" });
   }
   if (user.support_access_expires_at && new Date(user.support_access_expires_at) <= new Date()) {
     db.prepare("UPDATE users SET status = 'disabled', disabled_at = CURRENT_TIMESTAMP WHERE id = ?").run(user.id);
     audit(req, "login_rejected", { entityType: "user", entityId: user.id, message: "Expired support access login rejected" });
-    return res.status(403).json({ error: "This temporary support access has expired" });
+    return res.status(401).json({ error: "Invalid username or password" });
   }
   db.prepare("UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?").run(user.id);
   destroySession(req.cookies?.kairix_session);
@@ -726,6 +755,9 @@ app.get("/api/diagnostics", requireAdmin, (req, res) => {
     platform: process.platform,
     adminHostname: config.adminHostname,
     publicHostname: config.publicHostname,
+    adminBindIp: config.adminBindIp,
+    previewBindIp: config.previewBindIp,
+    insecureAdminBindOverride: config.allowInsecureAdminBind,
     activeRequestHost: requestHostname(req),
     publicHostModeEnabled: publicHostModeEnabled(),
     publicBaseUrl: config.publicBaseUrl,
@@ -734,6 +766,7 @@ app.get("/api/diagnostics", requireAdmin, (req, res) => {
     adminBaseUrl: config.adminBaseUrl,
     cookieSecure: config.cookieSecure,
     trustProxy: config.trustProxy,
+    sessionLifetimeHours: config.sessionLifetimeMs / (60 * 60 * 1000),
     sampleDataToolsEnabled: config.sampleDataToolsEnabled,
     deployProvider: config.deployProvider,
     cloudflareProjectConfigured: Boolean(
@@ -883,14 +916,16 @@ app.get("/api/backups", requireAdmin, (_req, res) => {
   res.json({ backups: listBackups() });
 });
 
-app.post("/api/backups", requireAdmin, asyncRoute(async (req, res) => {
+app.post("/api/backups", sensitiveOperationLimiter, requireAdmin, asyncRoute(async (req, res) => {
   const backup = await createBackup({ kind: "manual", createdBy: req.user.id });
   audit(req, "backup_create", { entityType: "backup", message: `Created backup ${backup.filename}`, metadata: { size: backup.size } });
   res.json({ backup: { filename: backup.filename, size: backup.size, manifest: backup.manifest } });
 }));
 
 app.get("/api/backups/:filename/inspect", requireAdmin, asyncRoute(async (req, res) => {
-  res.json({ backup: await inspectBackup(req.params.filename) });
+  const backup = await inspectBackup(req.params.filename);
+  audit(req, "backup_inspect", { entityType: "backup", message: `Inspected backup ${backup.filename}` });
+  res.json({ backup });
 }));
 
 app.get("/api/backups/:filename/download", requireAdmin, (req, res) => {
@@ -900,6 +935,7 @@ app.get("/api/backups/:filename/download", requireAdmin, (req, res) => {
   }
   const filepath = path.join(config.backupsDir, filename);
   if (!fs.existsSync(filepath)) return res.status(404).json({ error: "Backup not found" });
+  audit(req, "backup_download", { entityType: "backup", message: `Downloaded backup ${filename}` });
   res.download(filepath, filename);
 });
 
@@ -921,20 +957,21 @@ app.put("/api/integrations/aliexpress/settings", requireAdmin, (req, res) => {
   res.json({ connection });
 });
 
-app.post("/api/integrations/aliexpress/connect", requireAdmin, (req, res) => {
+app.post("/api/integrations/aliexpress/connect", sensitiveOperationLimiter, requireAdmin, (req, res) => {
   try {
     const token = createOneTimeToken();
     const connection = getMarketplaceConnection("aliexpress", { includeSecrets: true });
     const authUrl = buildAuthUrl(connection, token.raw);
     db.prepare("UPDATE marketplace_connections SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE marketplace = 'aliexpress'")
       .run(JSON.stringify({ oauthStateHash: token.hash, startedAt: new Date().toISOString() }));
+    audit(req, "aliexpress_connect_started", { entityType: "marketplace_connection", message: "AliExpress OAuth connection started" });
     res.json({ authUrl, redirectUri: redirectUri() });
   } catch (error) {
     res.status(error.code === "setup_required" ? 400 : 500).json({ error: error.message, code: error.code || "aliexpress_connect_failed" });
   }
 });
 
-app.get("/api/integrations/aliexpress/callback", asyncRoute(async (req, res) => {
+app.get("/api/integrations/aliexpress/callback", sensitiveOperationLimiter, asyncRoute(async (req, res) => {
   const code = cleanText(req.query.code);
   const state = cleanText(req.query.state);
   const row = db.prepare("SELECT * FROM marketplace_connections WHERE marketplace = 'aliexpress'").get();
@@ -965,6 +1002,7 @@ app.get("/api/integrations/aliexpress/callback", asyncRoute(async (req, res) => 
     encryptSecret(tokens.refresh_token || tokens.refreshToken || ""),
     tokens.expires_at || tokens.expiresAt || null
   );
+  audit(req, "aliexpress_connect_completed", { entityType: "marketplace_connection", message: "AliExpress OAuth connection completed" });
   res.redirect("/#settings/integrations");
 }));
 
@@ -978,7 +1016,7 @@ app.post("/api/integrations/aliexpress/disconnect", requireAdmin, (req, res) => 
   res.json({ connection: getMarketplaceConnection("aliexpress") });
 });
 
-app.post("/api/integrations/aliexpress/test", requireAdmin, asyncRoute(async (_req, res) => {
+app.post("/api/integrations/aliexpress/test", sensitiveOperationLimiter, requireAdmin, asyncRoute(async (_req, res) => {
   try {
     await testConnection(getMarketplaceConnection("aliexpress", { includeSecrets: true }));
     db.prepare("UPDATE marketplace_connections SET status = 'connected', last_test_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE marketplace = 'aliexpress'").run();
@@ -990,7 +1028,7 @@ app.post("/api/integrations/aliexpress/test", requireAdmin, asyncRoute(async (_r
   }
 }));
 
-app.post("/api/integrations/aliexpress/fetch-products", requireAdmin, asyncRoute(async (req, res) => {
+app.post("/api/integrations/aliexpress/fetch-products", sensitiveOperationLimiter, requireAdmin, asyncRoute(async (req, res) => {
   try {
     const query = z.object({
       page_size: z.coerce.number().int().min(1).max(100).default(20),
@@ -1070,7 +1108,7 @@ app.post("/api/integrations/aliexpress/detach-product/:id", requireAdmin, (req, 
   res.json({ ok: true });
 });
 
-app.post("/api/files/upload", requirePermission("files"), upload.array("files", 12), (req, res) => {
+app.post("/api/files/upload", uploadLimiter, requirePermission("files"), upload.array("files", 12), (req, res) => {
   const results = (req.files || []).map(saveUploadedFileRecord);
   res.json({ files: results.map((result) => result.file), results });
 });
@@ -1700,7 +1738,7 @@ app.post("/api/contact-submissions", publicWriteLimiter, (req, res) => {
   const result = db.prepare(`
     INSERT INTO contact_submissions (name, email, product_id, message, metadata, ip_address)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(cleanText(body.name), cleanText(body.email), body.productId || null, cleanText(body.message), metadata, req.ip || "");
+  `).run(cleanText(body.name), cleanText(body.email), body.productId || null, cleanText(body.message), metadata, cleanText(req.ip || "").slice(0, 64));
   res.json({ ok: true, id: result.lastInsertRowid });
 });
 
@@ -1715,7 +1753,7 @@ app.get("/api/contact-submissions", requirePermission("read"), (_req, res) => {
   res.json({ submissions });
 });
 
-app.post("/api/publish", requirePermission("publish"), asyncRoute(async (req, res) => {
+app.post("/api/publish", publishLimiter, requirePermission("publish"), asyncRoute(async (req, res) => {
   const result = await publishSite(req.user.id);
   audit(req, "publish_success", {
     entityType: "publish",
@@ -2166,13 +2204,17 @@ app.post("/api/sample-data", requireAdmin, (req, res) => {
   res.json({ ok: true, batchNumber, label: titlePrefix, counts });
 });
 
-app.use("/uploads", express.static(config.uploadsDir, {
+app.use("/uploads", requireAuth, express.static(config.uploadsDir, {
   index: false,
   dotfiles: "deny",
   setHeaders(res, filePath) {
     res.setHeader("X-Content-Type-Options", "nosniff");
-    if (path.extname(filePath).toLowerCase() === ".svg") {
+    const extension = path.extname(filePath).toLowerCase();
+    if (extension === ".svg") {
       res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'");
+    }
+    if (config.riskyUploadExtensions.has(extension) || [".zip", ".bin", ".hex", ".uf2"].includes(extension)) {
+      res.setHeader("Content-Disposition", "attachment");
     }
   }
 }));
@@ -2192,6 +2234,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(config.adminSrcDir, "public")));
 app.get("*", (req, res) => {
   if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
+  setAdminDocumentHeaders(res);
   res.sendFile(path.join(config.adminSrcDir, "public", "index.html"));
 });
 

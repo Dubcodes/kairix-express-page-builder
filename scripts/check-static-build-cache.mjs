@@ -12,6 +12,7 @@ const cacheDir = path.join(sandbox, "cache", "kairix-vite-site");
 const outputDir = path.join(sandbox, "output");
 const contentRoot = path.join(sandbox, "publish-job");
 const contentPath = path.join(contentRoot, "input", "content.json");
+const publicDir = path.join(sandbox, "public");
 
 async function makeTreeReadOnly(target) {
   const stat = await fs.lstat(target);
@@ -63,6 +64,7 @@ try {
     supportPacks: [],
     softwareBundles: []
   });
+  await fs.ensureDir(publicDir);
   if (process.platform !== "win32") {
     await makeTreeReadOnly(readOnlyRoot);
     await fs.access(readOnlyRoot, fs.constants.R_OK | fs.constants.X_OK);
@@ -76,6 +78,7 @@ try {
       ASTRO_WORK_DIR: sandbox,
       VITE_CACHE_DIR: cacheDir,
       ASTRO_OUT_DIR: outputDir,
+      ASTRO_PUBLIC_DIR: publicDir,
       PUBLIC_BASE_URL: "http://localhost:8080",
       PUBLIC_SITE_BASE_PATH: "/preview",
       KAIRIX_CONTENT_ROOT: contentRoot,

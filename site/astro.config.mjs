@@ -12,7 +12,9 @@ const buildRoot = process.env.ASTRO_WORK_DIR
 export default defineConfig({
   root: buildRoot,
   srcDir: path.join(sourceRoot, "src"),
-  publicDir: path.join(sourceRoot, "public"),
+  publicDir: process.env.ASTRO_PUBLIC_DIR
+    ? path.resolve(process.env.ASTRO_PUBLIC_DIR)
+    : path.join(sourceRoot, "public"),
   output: "static",
   outDir: process.env.ASTRO_OUT_DIR
     ? path.resolve(process.env.ASTRO_OUT_DIR)

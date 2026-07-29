@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
+import { resolveSecret } from "./services/secrets.js";
 
 dotenv.config();
 
@@ -38,38 +39,47 @@ const badProductionSecrets = new Set([
 ]);
 
 export function requireProductionSecret(name, value, nodeEnv = process.env.NODE_ENV) {
-  const secret = String(value || "").trim();
+  const secret = String(value || "");
   if (nodeEnv !== "production") return secret;
-  if (secret.length < 32 || badProductionSecrets.has(secret)) {
+  if (secret.trim().length < 32 || badProductionSecrets.has(secret.trim())) {
     throw new Error(`${name} must be set to a random value of at least 32 characters in production.`);
   }
   return secret;
 }
 
-const sessionSecret = requireProductionSecret("SESSION_SECRET", process.env.SESSION_SECRET || "local-dev-change-me");
+const configuredSessionSecret = resolveSecret("SESSION_SECRET");
+const configuredEncryptionSecret = resolveSecret("ENCRYPTION_SECRET");
+const cloudflareApiToken = resolveSecret("CLOUDFLARE_API_TOKEN");
+const sessionSecret = requireProductionSecret("SESSION_SECRET", configuredSessionSecret || "local-dev-change-me");
 const encryptionSecret = requireProductionSecret(
   "ENCRYPTION_SECRET",
-  process.env.ENCRYPTION_SECRET || process.env.SESSION_SECRET || "local-dev-change-me"
+  configuredEncryptionSecret || configuredSessionSecret || "local-dev-change-me"
 );
 const trustProxy = boolEnv("TRUST_PROXY", false);
 const cookieSecure = boolEnv("COOKIE_SECURE", process.env.NODE_ENV === "production");
 const sampleDataToolsEnabled = boolEnv("ENABLE_SAMPLE_DATA_TOOLS", process.env.NODE_ENV !== "production");
+const allowInsecureAdminBind = boolEnv("ALLOW_INSECURE_ADMIN_BIND", false);
 const deployProvider = String(process.env.DEPLOY_PROVIDER || "local").trim().toLowerCase();
 const publicBaseUrl = process.env.PUBLIC_BASE_URL || "http://localhost:4321";
 const publicSiteBasePath = process.env.PUBLIC_SITE_BASE_PATH ?? "/preview";
 const adminBaseUrl = process.env.ADMIN_BASE_URL || "http://localhost:8080";
+const adminBindIp = String(process.env.ADMIN_BIND_IP ?? "127.0.0.1").trim();
+const previewBindIp = String(process.env.PREVIEW_BIND_IP ?? "127.0.0.1").trim();
 
 if (!new Set(["local", "cloudflare-pages", "cloudflare-workers"]).has(deployProvider)) {
   throw new Error("DEPLOY_PROVIDER must be local, cloudflare-pages, or cloudflare-workers.");
 }
 
 const requiredCloudflareVariables = deployProvider === "cloudflare-pages"
-  ? ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_PAGES_PROJECT", "CLOUDFLARE_API_TOKEN"]
+  ? [["CLOUDFLARE_ACCOUNT_ID", process.env.CLOUDFLARE_ACCOUNT_ID], ["CLOUDFLARE_PAGES_PROJECT", process.env.CLOUDFLARE_PAGES_PROJECT], ["CLOUDFLARE_API_TOKEN", cloudflareApiToken]]
   : deployProvider === "cloudflare-workers"
-    ? ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_WORKER_NAME", "CLOUDFLARE_API_TOKEN"]
+    ? [["CLOUDFLARE_ACCOUNT_ID", process.env.CLOUDFLARE_ACCOUNT_ID], ["CLOUDFLARE_WORKER_NAME", process.env.CLOUDFLARE_WORKER_NAME], ["CLOUDFLARE_API_TOKEN", cloudflareApiToken]]
     : [];
-for (const name of requiredCloudflareVariables) {
-  if (!String(process.env[name] || "").trim()) throw new Error(`${name} is required when DEPLOY_PROVIDER=${deployProvider}.`);
+for (const [name, value] of requiredCloudflareVariables) {
+  if (!String(value || "").trim()) {
+    const accepted = name === "CLOUDFLARE_API_TOKEN" ? `${name} or ${name}_FILE` : name;
+    throw new Error(`${accepted} is required when DEPLOY_PROVIDER=${deployProvider}.`);
+  }
 }
 
 if (process.env.NODE_ENV === "production" && sessionSecret === encryptionSecret) {
@@ -84,6 +94,10 @@ if (process.env.NODE_ENV === "production" && sampleDataToolsEnabled) {
   console.warn("ENABLE_SAMPLE_DATA_TOOLS=true in production. Disable it before sharing the Page Manager with clients.");
 }
 
+function isLoopbackBind(value) {
+  return new Set(["127.0.0.1", "::1", "[::1]", "localhost"]).has(String(value || "").trim().toLowerCase());
+}
+
 export function validateProductionConfiguration({
   nodeEnv,
   adminBaseUrl: adminUrlValue,
@@ -92,7 +106,11 @@ export function validateProductionConfiguration({
   deployProvider: provider,
   cookieSecure: secureCookies,
   trustProxy: proxyTrusted,
-  publicHostname
+  adminHostname,
+  publicHostname,
+  adminBindIp: adminBind = "127.0.0.1",
+  previewBindIp: previewBind = "127.0.0.1",
+  allowInsecureAdminBind: allowAdminBind = false
 }) {
   if (nodeEnv !== "production") return [];
   const issues = [];
@@ -110,8 +128,23 @@ export function validateProductionConfiguration({
   }
   if (adminUrl && !["http:", "https:"].includes(adminUrl.protocol)) issues.push("ADMIN_BASE_URL must use http or https.");
   if (publicUrl && !["http:", "https:"].includes(publicUrl.protocol)) issues.push("PUBLIC_BASE_URL must use http or https.");
+  if (adminUrl && (
+    adminUrl.username
+    || adminUrl.password
+    || !["", "/"].includes(adminUrl.pathname)
+    || adminUrl.search
+    || adminUrl.hash
+  )) issues.push("ADMIN_BASE_URL must be an origin URL without credentials, path, query, or fragment.");
+  if (adminUrl && String(adminHostname || "").trim() && adminUrl.hostname.toLowerCase() !== String(adminHostname).trim().toLowerCase()) {
+    issues.push("ADMIN_HOSTNAME must match the ADMIN_BASE_URL hostname.");
+  }
   if (adminUrl?.protocol === "https:" && !secureCookies) issues.push("COOKIE_SECURE must be true when ADMIN_BASE_URL uses HTTPS.");
+  if (secureCookies && adminUrl?.protocol !== "https:") issues.push("ADMIN_BASE_URL must use HTTPS when COOKIE_SECURE is true.");
   if (secureCookies && !proxyTrusted) issues.push("TRUST_PROXY must be true when secure cookies are used behind the production reverse proxy.");
+  if (!isLoopbackBind(adminBind) && !allowAdminBind) {
+    issues.push("ADMIN_BIND_IP must be loopback in production unless ALLOW_INSECURE_ADMIN_BIND=true is deliberately set.");
+  }
+  if (!isLoopbackBind(previewBind)) issues.push("PREVIEW_BIND_IP must be loopback in production.");
   if (["cloudflare-pages", "cloudflare-workers"].includes(provider)) {
     const providerLabel = provider === "cloudflare-workers" ? "Cloudflare Workers" : "Cloudflare Pages";
     if (publicUrl?.protocol !== "https:") issues.push(`PUBLIC_BASE_URL must use HTTPS for ${providerLabel} publishing.`);
@@ -131,9 +164,19 @@ const safetyIssues = validateProductionConfiguration({
   deployProvider,
   cookieSecure,
   trustProxy,
-  publicHostname: process.env.PUBLIC_HOSTNAME
+  adminHostname: process.env.ADMIN_HOSTNAME,
+  publicHostname: process.env.PUBLIC_HOSTNAME,
+  adminBindIp,
+  previewBindIp,
+  allowInsecureAdminBind
 });
-safetyIssues.forEach((issue) => console.error(`Production safety check: ${issue}`));
+safetyIssues.forEach((issue) => console.error(`CRITICAL production safety check: ${issue}`));
+if (process.env.NODE_ENV === "production" && safetyIssues.some((issue) => /(?:ADMIN|PREVIEW)_BIND_IP/.test(issue))) {
+  throw new Error("Unsafe production network binding rejected. Use loopback bindings for the Page Manager and private preview.");
+}
+if (process.env.NODE_ENV === "production" && allowInsecureAdminBind && !isLoopbackBind(adminBindIp)) {
+  console.warn("CRITICAL SECURITY WARNING: ALLOW_INSECURE_ADMIN_BIND=true exposes the Page Manager beyond loopback. This is unsuitable for normal dedicated-server deployment.");
+}
 
 export const config = {
   projectRoot,
@@ -149,6 +192,9 @@ export const config = {
   adminBaseUrl,
   adminHostname: process.env.ADMIN_HOSTNAME || "",
   publicHostname: process.env.PUBLIC_HOSTNAME || "",
+  adminBindIp,
+  previewBindIp,
+  allowInsecureAdminBind,
   encryptionSecret,
   aliexpressAuthUrl: process.env.ALIEXPRESS_AUTH_URL || "",
   aliexpressTokenUrl: process.env.ALIEXPRESS_TOKEN_URL || "",
@@ -157,6 +203,7 @@ export const config = {
   cookieSecure,
   sampleDataToolsEnabled,
   sessionSecret,
+  sessionLifetimeMs: positiveIntEnv("SESSION_LIFETIME_HOURS", 12, { min: 1, max: 168 }) * 60 * 60 * 1000,
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB || 25),
   allowedUploadExtensions: new Set([
     ".jpg",
@@ -202,7 +249,7 @@ export const config = {
   cloudflarePagesProject: process.env.CLOUDFLARE_PAGES_PROJECT || "",
   cloudflarePagesBranch: process.env.CLOUDFLARE_PAGES_BRANCH || "main",
   cloudflareWorkerName: process.env.CLOUDFLARE_WORKER_NAME || "",
-  cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN || "",
+  cloudflareApiToken,
   cloudflareDeployTimeoutMs: positiveIntEnv("CLOUDFLARE_DEPLOY_TIMEOUT_MS", 10 * 60 * 1000, { min: 10_000, max: 60 * 60 * 1000 }),
   cloudflarePreflightTimeoutMs: positiveIntEnv("CLOUDFLARE_PREFLIGHT_TIMEOUT_MS", 15_000, { min: 1_000, max: 60_000 }),
   publishMaxFiles: positiveIntEnv("PUBLISH_MAX_FILES", 20_000, { min: 1, max: 100_000 }),

@@ -7,6 +7,9 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8080
+      ADMIN_BIND_IP: ${ADMIN_BIND_IP:-127.0.0.1}
+      PREVIEW_BIND_IP: ${PREVIEW_BIND_IP:-127.0.0.1}
+      ALLOW_INSECURE_ADMIN_BIND: ${ALLOW_INSECURE_ADMIN_BIND:-false}
       DATABASE_PATH: /app/data/kairix.sqlite
       UPLOADS_DIR: /app/uploads
       GENERATED_SITE_DIR: /app/generated-site/current
@@ -15,8 +18,10 @@ services:
       VITE_CACHE_DIR: ${VITE_CACHE_DIR:-/tmp/kairix-vite-site}
       XDG_CONFIG_HOME: ${XDG_CONFIG_HOME:-/tmp/kairix-wrangler/config}
       XDG_CACHE_HOME: ${XDG_CACHE_HOME:-/tmp/kairix-wrangler/cache}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      TRUST_PROXY: ${TRUST_PROXY:-false}
+      HOME: /tmp/kairix-home
+      NPM_CONFIG_CACHE: /tmp/kairix-npm
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
       ENABLE_SAMPLE_DATA_TOOLS: ${ENABLE_SAMPLE_DATA_TOOLS:-false}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-25}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:4321}
@@ -37,24 +42,37 @@ services:
       PUBLISH_MAX_TOTAL_MB: ${PUBLISH_MAX_TOTAL_MB:-500}
       PUBLISH_MAX_FILE_MB: ${PUBLISH_MAX_FILE_MB:-25}
       SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_SECRET_FILE: ${SESSION_SECRET_FILE:-}
+      SESSION_LIFETIME_HOURS: ${SESSION_LIFETIME_HOURS:-12}
       ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:-}
+      ENCRYPTION_SECRET_FILE: ${ENCRYPTION_SECRET_FILE:-}
+      CLOUDFLARE_API_TOKEN_FILE: ${CLOUDFLARE_API_TOKEN_FILE:-}
       ALIEXPRESS_AUTH_URL: ${ALIEXPRESS_AUTH_URL:-}
       ALIEXPRESS_TOKEN_URL: ${ALIEXPRESS_TOKEN_URL:-}
       ALIEXPRESS_API_URL: ${ALIEXPRESS_API_URL:-}
     ports:
-      - "${ADMIN_BIND_IP:-127.0.0.1}:${ADMIN_PORT:-8080}:8080"
+      - "${ADMIN_BIND_IP:-127.0.0.1}:${ADMIN_PORT:-8040}:8080"
     volumes:
       - kairix-data:/app/data
       - kairix-uploads:/app/uploads
       - kairix-generated-site:/app/generated-site
     init: true
     stop_grace_period: 45s
+    read_only: true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2.0
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
     tmpfs:
-      - /tmp:uid=1000,gid=1000,mode=1777
+      - /tmp:rw,noexec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -67,13 +85,36 @@ services:
       context: .
       dockerfile: docker/nginx-preview.Dockerfile
     restart: unless-stopped
+    read_only: true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
     ports:
-      - "${PREVIEW_BIND_IP:-127.0.0.1}:${PUBLIC_PREVIEW_PORT:-4321}:80"
+      - "${PREVIEW_BIND_IP:-127.0.0.1}:${PUBLIC_PREVIEW_PORT:-4321}:8080"
     volumes:
       - kairix-generated-site:/usr/share/nginx/html:ro
     depends_on:
       admin:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=101,gid=101,mode=1777
+      - /var/cache/nginx:rw,nosuid,nodev,size=16m,uid=101,gid=101,mode=0755
+      - /var/run:rw,nosuid,nodev,size=1m,uid=101,gid=101,mode=0755
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   kairix-data:

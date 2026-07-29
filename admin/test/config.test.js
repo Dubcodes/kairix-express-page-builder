@@ -68,3 +68,68 @@ test("valid Cloudflare Workers production relationship passes", () => {
     publicHostname: ""
   }), []);
 });
+
+test("production bind policy rejects wildcard, empty, and externally reachable bindings", () => {
+  for (const adminBindIp of ["", "0.0.0.0", "::", "192.168.1.20"]) {
+    const issues = validateProductionConfiguration({
+      nodeEnv: "production",
+      adminBaseUrl: "https://manager.example.test",
+      publicBaseUrl: "https://xpress-01.example.workers.dev",
+      publicSiteBasePath: "",
+      deployProvider: "cloudflare-workers",
+      cookieSecure: true,
+      trustProxy: true,
+      publicHostname: "",
+      adminBindIp,
+      previewBindIp: "127.0.0.1"
+    });
+    assert.ok(issues.some((issue) => issue.includes("ADMIN_BIND_IP")));
+  }
+  assert.ok(validateProductionConfiguration({
+    nodeEnv: "production",
+    adminBaseUrl: "https://manager.example.test",
+    publicBaseUrl: "https://xpress-01.example.workers.dev",
+    publicSiteBasePath: "",
+    deployProvider: "cloudflare-workers",
+    cookieSecure: true,
+    trustProxy: true,
+    publicHostname: "",
+    adminBindIp: "127.0.0.1",
+    previewBindIp: "0.0.0.0"
+  }).some((issue) => issue.includes("PREVIEW_BIND_IP")));
+});
+
+test("deliberate admin bind override does not weaken preview bind enforcement", () => {
+  const issues = validateProductionConfiguration({
+    nodeEnv: "production",
+    adminBaseUrl: "https://manager.example.test",
+    publicBaseUrl: "https://xpress-01.example.workers.dev",
+    publicSiteBasePath: "",
+    deployProvider: "cloudflare-workers",
+    cookieSecure: true,
+    trustProxy: true,
+    publicHostname: "",
+    adminBindIp: "192.168.1.20",
+    previewBindIp: "127.0.0.1",
+    allowInsecureAdminBind: true
+  });
+  assert.equal(issues.some((issue) => issue.includes("ADMIN_BIND_IP")), false);
+});
+
+test("admin origin and expected hostname cannot be derived from an unsafe Host value", () => {
+  const issues = validateProductionConfiguration({
+    nodeEnv: "production",
+    adminBaseUrl: "https://manager.example.test/attacker?next=1",
+    adminHostname: "different.example.test",
+    publicBaseUrl: "https://xpress-01.example.workers.dev",
+    publicSiteBasePath: "",
+    deployProvider: "cloudflare-workers",
+    cookieSecure: true,
+    trustProxy: true,
+    publicHostname: "",
+    adminBindIp: "127.0.0.1",
+    previewBindIp: "127.0.0.1"
+  });
+  assert.ok(issues.some((issue) => issue.includes("origin URL")));
+  assert.ok(issues.some((issue) => issue.includes("ADMIN_HOSTNAME must match")));
+});

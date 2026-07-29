@@ -93,16 +93,17 @@ The Page Manager does not write raw HTML pages. It saves structured content, and
 
 ## Client-ready deployment checklist
 
-This project is an MVP suitable for a stable client demo, not an enterprise-grade, payment-grade, or fully security-audited platform.
+This project supports a hardened single-business deployment. One deployment serves one business or one mutually trusted client group. Multiple independent clients use separate Compose projects, volumes, secrets, users, backups, hostnames, and Workers; the application is not a shared multi-tenant service.
 
-- Use HTTPS before sharing admin access.
-- For local LAN testing use `COOKIE_SECURE=false` and `TRUST_PROXY=false`.
-- For a private LAN HTTPS reverse proxy use `COOKIE_SECURE=true` and `TRUST_PROXY=true`.
+- Put the dedicated Page Manager hostname behind Cloudflare Access and Tunnel before sharing admin access.
+- For explicitly non-production local LAN testing only, use `COOKIE_SECURE=false`, `TRUST_PROXY=false`, and the documented insecure-bind override.
+- Dedicated production uses loopback binds, `COOKIE_SECURE=true`, and `TRUST_PROXY=true` behind host `cloudflared`.
 - Set real, different `SESSION_SECRET` and `ENCRYPTION_SECRET` values.
 - Keep `ENABLE_SAMPLE_DATA_TOOLS=false` before sharing with clients.
 - Publish before sharing `/preview/`; the preview shows the last successfully published customer site.
 - Share `/preview/` for viewing only.
-- If a client needs admin access, create a temporary limited user and disable/remove it after the demo.
+- Give clients normal browser-only HTTPS access; do not require client VPN/Tailscale software.
+- Create a limited Page Manager user and independently allow the client's exact email in Cloudflare Access.
 - For client editing tests, prefer `Editor` or `Publisher`. Do not give `Admin` unless necessary.
 - `File Manager` can upload files, `Publisher` can publish, and `Read Only` can view but not edit.
 - Back up Docker volumes before upgrades. The in-app backup is not a complete Docker volume backup.
@@ -135,10 +136,10 @@ The compose stack runs the Page Manager admin/backend plus an optional nginx `pu
 
 Ports:
 
-- Page Manager admin/backend: `${ADMIN_BIND_IP:-127.0.0.1}:${ADMIN_PORT:-8080}` -> container `8080`
-- Static preview: `${PREVIEW_BIND_IP:-127.0.0.1}:${PUBLIC_PREVIEW_PORT:-4321}` -> container `80`
+- Page Manager admin/backend: `${ADMIN_BIND_IP:-127.0.0.1}:${ADMIN_PORT:-8040}` -> container `8080`
+- Static preview: `${PREVIEW_BIND_IP:-127.0.0.1}:${PUBLIC_PREVIEW_PORT:-4321}` -> container `8080`
 
-Both ports default to loopback. In Portainer, set `ADMIN_BIND_IP` to the Linux server's LAN address to make the Page Manager reachable from trusted LAN clients. Keep `PREVIEW_BIND_IP=127.0.0.1` unless a separate LAN-only preview is deliberately needed. Do not port-forward either service.
+Both ports are loopback-only in production. `cloudflared` runs directly on the dedicated Debian host and forwards only the client's exact manager hostname to that client's loopback admin port. Do not port-forward either service, expose the preview, or add cloudflared to the application stack.
 
 Volumes:
 
@@ -163,11 +164,15 @@ PUBLIC_SITE_BASE_PATH=
 PUBLIC_HOSTNAME=
 ```
 
-The Workers provider does not need Git integration, Wrangler login, a Docker socket, inbound Cloudflare access, or a Cloudflare Tunnel.
+The Workers publishing provider does not need Git integration, Wrangler login, a Docker socket, inbound Cloudflare access, or a Tunnel. The separate client-facing Page Manager architecture uses its own outbound host `cloudflared` service.
 
-This deployment keeps the Page Manager LAN-only and does not require an inbound Cloudflare Tunnel. If a private LAN HTTPS reverse proxy is used, protect it with access controls and set `TRUST_PROXY=true`, `COOKIE_SECURE=true`, and the final HTTPS `ADMIN_BASE_URL`. Production secrets must be different random values of at least 32 characters.
+The dedicated-server production model exposes the authenticated Page Manager through Cloudflare Access and an outbound-only Tunnel while keeping its Docker host binding on loopback. The Page Manager retains its own login. Set `TRUST_PROXY=true`, `COOKIE_SECURE=true`, `ADMIN_HOSTNAME` to the exact manager hostname, and `ADMIN_BASE_URL` to its final HTTPS origin. Production secrets can be supplied through read-only files and must be different random values of at least 32 characters.
 
 The Git-to-Portainer deployment and staged rollout are in [docs/PORTAINER_GIT_STACK_RUNBOOK.md](docs/PORTAINER_GIT_STACK_RUNBOOK.md). The Cloudflare project/token setup, diagnostics, rollback, rotation, emergency-disable steps, and checklist are in [docs/CLOUDFLARE_PAGES_RUNBOOK.md](docs/CLOUDFLARE_PAGES_RUNBOOK.md). Security/reliability findings and remaining risks are in [docs/SECURITY_RELIABILITY_AUDIT.md](docs/SECURITY_RELIABILITY_AUDIT.md).
+Dedicated Debian, VLAN/firewall policy, Cloudflare Tunnel/Access, secret files, backup/restore, monitoring, and incident response are in [docs/DEDICATED_SERVER_SECURITY_RUNBOOK.md](docs/DEDICATED_SERVER_SECURITY_RUNBOOK.md).
+Repeatable single-tenant client instance naming, ports, isolation, updates, restoration, offboarding, and incident isolation are in [docs/MULTI_INSTANCE_CLIENT_DEPLOYMENT.md](docs/MULTI_INSTANCE_CLIENT_DEPLOYMENT.md).
+
+> **Current live deployment warning:** Do not change the current Page Manager to loopback-only or enable secure proxy cookies until its Cloudflare Tunnel, exact hostname, and Access policy have been created and tested. Doing so prematurely may lock the operator out. The hardened values in `.env.example` are defaults for new dedicated-client instances, not an instruction to mutate the existing live stack immediately.
 
 Do not expose Portainer publicly. Keep `ENABLE_SAMPLE_DATA_TOOLS=false` in production. For a clean demo rebuild, create an in-app backup, use a separate stack name/volumes, and never edit SQLite by hand.
 
@@ -245,9 +250,13 @@ Settings -> Marketplace Integrations includes an AliExpress connection foundatio
 - Password reset links are random, expire, and can be used once.
 - Passwords are hashed with bcrypt.
 - Session cookies are HTTP-only and SameSite=Lax.
+- Session lifetime is configurable with a 12-hour production default.
 - Authenticated write requests require a CSRF token.
 - User, invite, login, product, bundle, settings, and publish actions are written to an audit log.
 - Uploads are stored outside executable code paths.
+- Production rejects external/wildcard preview binding and requires an explicit critical-warning override for a non-loopback admin binding.
+- Runtime containers use read-only roots, limited tmpfs, resource limits, dropped capabilities, and log rotation.
+- `SESSION_SECRET_FILE`, `ENCRYPTION_SECRET_FILE`, and `CLOUDFLARE_API_TOKEN_FILE` take precedence over legacy value variables.
 - The public site is generated static output and has no database credentials.
 - `.env.example` documents variable names only; real secrets must stay in private environment/Portainer secret configuration.
 

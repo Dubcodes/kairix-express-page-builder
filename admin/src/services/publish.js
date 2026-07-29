@@ -12,6 +12,7 @@ import { runProcess } from "./processRunner.js";
 import { isPathInside, SiteValidationError, validateGeneratedSite } from "./siteValidation.js";
 import { withPublishLock } from "./publishLock.js";
 import { ensureSafePublishError, formatPublishFailure } from "./publishDiagnostics.js";
+import { sanitizedChildEnvironment } from "./processEnvironment.js";
 export { cancelActivePublish, PublishInProgressError, publishStatus, withPublishLock } from "./publishLock.js";
 
 function stripAnsi(value) {
@@ -135,10 +136,11 @@ function recordPublishEvent(userId, status, payload) {
 
 async function gitMetadata(runProcessImpl = runProcess) {
   try {
+    const env = sanitizedChildEnvironment();
     const [commit, status, subject] = await Promise.all([
-      runProcessImpl("git", ["rev-parse", "HEAD"], { cwd: config.projectRoot, timeoutMs: 5_000, maxOutputBytes: 4_096 }),
-      runProcessImpl("git", ["status", "--porcelain"], { cwd: config.projectRoot, timeoutMs: 5_000, maxOutputBytes: 32_768 }),
-      runProcessImpl("git", ["log", "-1", "--pretty=%s"], { cwd: config.projectRoot, timeoutMs: 5_000, maxOutputBytes: 4_096 })
+      runProcessImpl("git", ["rev-parse", "HEAD"], { cwd: config.projectRoot, env, timeoutMs: 5_000, maxOutputBytes: 4_096 }),
+      runProcessImpl("git", ["status", "--porcelain"], { cwd: config.projectRoot, env, timeoutMs: 5_000, maxOutputBytes: 32_768 }),
+      runProcessImpl("git", ["log", "-1", "--pretty=%s"], { cwd: config.projectRoot, env, timeoutMs: 5_000, maxOutputBytes: 4_096 })
     ]);
     return {
       commit: commit.stdout.trim(),
@@ -200,7 +202,8 @@ export async function publishSite(userId = null, dependencies = {}) {
       const data = await buildExportData();
       const inputDir = path.join(jobDir, "input");
       const dataPath = path.join(inputDir, "content.json");
-      const publicUploadsDir = path.join(config.projectRoot, "site", "public", "uploads");
+      const publicDir = path.join(jobDir, "public");
+      const publicUploadsDir = path.join(publicDir, "uploads");
       await fs.ensureDir(inputDir);
       await fs.writeJson(dataPath, data, { spaces: 2 });
       const managedFiles = db.prepare("SELECT id, stored_name FROM files ORDER BY id").all();
@@ -231,16 +234,16 @@ export async function publishSite(userId = null, dependencies = {}) {
       stage = "build";
       const build = await runProcessImpl(process.execPath, [path.join(config.projectRoot, "site", "scripts", "astro.mjs"), "build"], {
         cwd: config.projectRoot,
-        env: {
-          ...process.env,
+        env: sanitizedChildEnvironment(process.env, {
           ASTRO_WORK_DIR: jobDir,
           ASTRO_OUT_DIR: outputDir,
+          ASTRO_PUBLIC_DIR: publicDir,
           KAIRIX_CONTENT_PATH: dataPath,
           KAIRIX_CONTENT_ROOT: jobDir,
           KAIRIX_USE_SAMPLE_CONTENT: "false",
           PUBLIC_BASE_URL: config.publicBaseUrl,
           PUBLIC_SITE_BASE_PATH: config.publicSiteBasePath
-        },
+        }),
         timeoutMs: config.cloudflareDeployTimeoutMs,
         maxOutputBytes: 256 * 1024,
         signal
@@ -258,7 +261,15 @@ export async function publishSite(userId = null, dependencies = {}) {
         approvedRoot: buildRoot,
         maxFiles: config.publishMaxFiles,
         maxTotalBytes: config.publishMaxTotalBytes,
-        maxFileBytes: config.publishMaxFileBytes
+        maxFileBytes: config.publishMaxFileBytes,
+        sensitiveValues: [
+          config.sessionSecret,
+          config.encryptionSecret,
+          config.cloudflareApiToken,
+          ...(["cloudflare-pages", "cloudflare-workers"].includes(config.deployProvider)
+            ? [config.adminBaseUrl, config.adminHostname]
+            : [])
+        ]
       });
       const git = await gitMetadata(runProcessImpl);
 

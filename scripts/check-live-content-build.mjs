@@ -7,8 +7,6 @@ const repositoryRoot = path.resolve(".");
 await fs.ensureDir(path.join(repositoryRoot, ".cache"));
 const scratch = await fs.mkdtemp(path.join(repositoryRoot, ".cache", "live-content-scratch-"));
 const outputRoot = path.join(repositoryRoot, ".cache", "live-content-build");
-const uploadsBackup = path.join(scratch, "public-uploads-backup");
-const publicUploads = path.join(repositoryRoot, "site", "public", "uploads");
 
 process.env.NODE_ENV = "production";
 process.env.SESSION_SECRET = "live-content-check-session-secret-000000000000000000";
@@ -85,6 +83,7 @@ async function readPublicText(root) {
 async function buildVariant(name, sourceData, { basePath, publicBaseUrl, runtimeApiEnabled }) {
   const jobDir = path.join(scratch, `publish-${name}`);
   const contentPath = path.join(jobDir, "input", "content.json");
+  const publicDir = path.join(jobDir, "public");
   const outputDir = path.join(outputRoot, name);
   const data = structuredClone(sourceData);
   data.siteBasePath = basePath;
@@ -105,6 +104,7 @@ async function buildVariant(name, sourceData, { basePath, publicBaseUrl, runtime
       ...process.env,
       ASTRO_OUT_DIR: outputDir,
       ASTRO_WORK_DIR: jobDir,
+      ASTRO_PUBLIC_DIR: publicDir,
       PUBLIC_BASE_URL: publicBaseUrl,
       PUBLIC_SITE_BASE_PATH: basePath,
       KAIRIX_CONTENT_ROOT: jobDir,
@@ -151,8 +151,6 @@ async function buildVariant(name, sourceData, { basePath, publicBaseUrl, runtime
 }
 
 try {
-  if (await fs.pathExists(publicUploads)) await fs.copy(publicUploads, uploadsBackup);
-
   const logoId = await addManagedSvg("customer/banana-logo.svg", "banana-logo.svg", "Banana logo");
   const faviconId = await addManagedSvg("customer/banana-favicon.svg", "banana-favicon.svg", "Banana favicon");
   const heroId = await addManagedSvg("customer/banana-hero.svg", "banana-hero.svg", "Banana hero");
@@ -204,11 +202,13 @@ try {
   const exported = await buildExportData();
   assertExportedIdentity(exported);
   const managedFiles = db.prepare("SELECT id, stored_name FROM files ORDER BY id").all();
-  const uploadSummary = await storageProvider.copyToPublic(publicUploads, managedFiles);
-  if (uploadSummary.copiedFiles !== 4) throw new Error(`Expected four managed verification uploads; copied ${uploadSummary.copiedFiles}.`);
 
   await fs.emptyDir(outputRoot);
   const results = [];
+  for (const name of ["local", "cloudflare-workers-root"]) {
+    const uploadSummary = await storageProvider.copyToPublic(path.join(scratch, `publish-${name}`, "public", "uploads"), managedFiles);
+    if (uploadSummary.copiedFiles !== 4) throw new Error(`Expected four managed verification uploads; copied ${uploadSummary.copiedFiles}.`);
+  }
   results.push(await buildVariant("local", exported, {
     basePath: "/preview",
     publicBaseUrl: "http://localhost:8080",
@@ -226,8 +226,6 @@ try {
   console.log(`Demo strings absent: ${forbiddenStrings.join(", ")}.`);
 } finally {
   db.close();
-  await fs.remove(publicUploads);
-  if (await fs.pathExists(uploadsBackup)) await fs.copy(uploadsBackup, publicUploads);
   await fs.remove(scratch);
 }
 

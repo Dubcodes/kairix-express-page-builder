@@ -26,6 +26,14 @@ test("Kairix favicon remains admin-only", async () => {
   assert.equal(await fs.pathExists(publicFavicon), false);
 });
 
+test("invite and reset pages use external scripts compatible with strict CSP", async () => {
+  for (const [page, script] of [["invite.html", "invite.js"], ["reset.html", "reset.js"]]) {
+    const html = await fs.readFile(path.resolve("admin/src/public", page), "utf8");
+    assert.match(html, new RegExp(`<script src="/assets/${script}" type="module"></script>`));
+    assert.equal(/<script>(?:.|[\r\n])*?<\/script>/i.test(html), false);
+  }
+});
+
 test("favicon verifier checks customer and absent favicon policies on every page", async () => {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "kairix-favicon-test-"));
   try {

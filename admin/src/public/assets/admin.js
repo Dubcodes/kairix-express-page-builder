@@ -1136,8 +1136,12 @@ function diagnosticsSummaryHtml(diagnostics = {}) {
   return `
     <div><span>Admin hostname</span><strong>${escapeHtml(diagnostics.adminHostname || "Not set")}</strong></div>
     <div><span>Public hostname</span><strong>${escapeHtml(diagnostics.publicHostname || "Not set")}</strong></div>
+    <div><span>Admin host bind</span><strong>${escapeHtml(diagnostics.adminBindIp || "Unknown")}</strong></div>
+    <div><span>Preview host bind</span><strong>${escapeHtml(diagnostics.previewBindIp || "Unknown")}</strong></div>
+    <div><span>Insecure bind override</span><strong>${diagnostics.insecureAdminBindOverride ? "ENABLED" : "Disabled"}</strong></div>
     <div><span>Public host mode</span><strong>${diagnostics.publicHostModeEnabled ? "Enabled" : "Disabled"}</strong></div>
     <div><span>Deploy provider</span><strong>${escapeHtml(diagnostics.deployProvider || "local")}</strong></div>
+    <div><span>Session lifetime</span><strong>${escapeHtml(String(diagnostics.sessionLifetimeHours || "Unknown"))} hour(s)</strong></div>
     <div><span>Cloudflare target/credentials</span><strong>${diagnostics.cloudflareProjectConfigured ? "Configured" : "Not configured"}</strong></div>
     ${diagnostics.deployProvider === "cloudflare-workers" ? `<div><span>Worker name</span><strong>${escapeHtml(diagnostics.cloudflareWorkerName || "Not configured")}</strong></div>` : ""}
     <div><span>Production safety</span><strong>${diagnostics.productionSafetyIssues?.length ? `${diagnostics.productionSafetyIssues.length} issue(s)` : "Ready"}</strong></div>

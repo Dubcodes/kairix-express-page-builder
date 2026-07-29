@@ -60,6 +60,9 @@ if (!logicalLines.some((line) => /^ENV\s+XDG_CONFIG_HOME=\/tmp\/kairix-wrangler\
 if (!logicalLines.some((line) => /^ENV\s+XDG_CACHE_HOME=\/tmp\/kairix-wrangler\/cache$/i.test(line))) {
   throw new Error("Docker runtime must place Wrangler cache files under /tmp.");
 }
+if (!logicalLines.some((line) => /^ENV\s+HOME=\/tmp\/kairix-home$/i.test(line))) {
+  throw new Error("Docker runtime must place the node user's home under /tmp.");
+}
 if (!/VITE_CACHE_DIR:\s*\$\{VITE_CACHE_DIR:-\/tmp\/kairix-vite-site\}/.test(compose)) {
   throw new Error("Compose must default VITE_CACHE_DIR to the ephemeral /tmp cache.");
 }
@@ -69,8 +72,42 @@ if (!/XDG_CONFIG_HOME:\s*\$\{XDG_CONFIG_HOME:-\/tmp\/kairix-wrangler\/config\}/.
 if (!/XDG_CACHE_HOME:\s*\$\{XDG_CACHE_HOME:-\/tmp\/kairix-wrangler\/cache\}/.test(compose)) {
   throw new Error("Compose must default Wrangler cache files to /tmp.");
 }
-if (!/\/tmp:uid=1000,gid=1000,mode=1777/.test(compose)) {
-  throw new Error("Compose must retain the node-writable /tmp tmpfs.");
+if ((compose.match(/read_only:\s*true/g) || []).length < 2) {
+  throw new Error("Compose must retain read-only root filesystems for admin and preview.");
+}
+if (!/\/tmp:rw,noexec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=1777/.test(compose)) {
+  throw new Error("Compose must retain the size-limited node-writable /tmp tmpfs.");
+}
+for (const required of ["pids_limit:", "mem_limit:", "cpus:", "max-size:", "max-file:"]) {
+  if (!compose.includes(required)) throw new Error(`Compose container limits must include ${required}`);
+}
+if (!/SESSION_SECRET_FILE:\s*\$\{SESSION_SECRET_FILE:-\}/.test(compose)
+  || !/ENCRYPTION_SECRET_FILE:\s*\$\{ENCRYPTION_SECRET_FILE:-\}/.test(compose)
+  || !/CLOUDFLARE_API_TOKEN_FILE:\s*\$\{CLOUDFLARE_API_TOKEN_FILE:-\}/.test(compose)) {
+  throw new Error("Compose must pass supported file-based secret variables.");
+}
+if (/site[\\/]public[\\/]uploads/.test(fs.readFileSync(path.join(root, "admin", "src", "services", "publish.js"), "utf8"))) {
+  throw new Error("Runtime publishing must not write uploads under the read-only application source tree.");
+}
+const previewDockerfile = fs.readFileSync(path.join(root, "docker", "nginx-preview.Dockerfile"), "utf8");
+if (!/^FROM\s+nginxinc\/nginx-unprivileged:/mi.test(previewDockerfile)) {
+  throw new Error("Preview image must use the unprivileged nginx runtime.");
+}
+for (const volume of [
+  "kairix-data:/app/data",
+  "kairix-uploads:/app/uploads",
+  "kairix-generated-site:/app/generated-site"
+]) {
+  if (!compose.includes(volume)) throw new Error(`Compose must preserve named volume ${volume}.`);
+}
+for (const forbidden of ["/var/run/docker.sock", "network_mode: host", "privileged: true", "devices:"]) {
+  if (compose.includes(forbidden)) throw new Error(`Forbidden container capability found in Compose: ${forbidden}`);
+}
+if ((compose.match(/cap_drop:\r?\n\s*-\s*ALL/g) || []).length < 2) {
+  throw new Error("Both runtime containers must drop all Linux capabilities.");
+}
+if ((compose.match(/no-new-privileges:true/g) || []).length < 2) {
+  throw new Error("Both runtime containers must retain no-new-privileges.");
 }
 if (!/^\d+\.\d+\.\d+$/.test(String(adminPackage.dependencies?.wrangler || ""))) {
   throw new Error("Wrangler must remain an exact-pinned runtime dependency.");

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import fs from "fs-extra";
 import { config } from "../config.js";
 import { runProcess } from "../services/processRunner.js";
+import { sanitizedChildEnvironment } from "../services/processEnvironment.js";
 
 const require = createRequire(import.meta.url);
 const wranglerPackagePath = require.resolve("wrangler/package.json");
@@ -296,8 +297,7 @@ export class CloudflarePagesDeployProvider {
       `--commit-dirty=${git.dirty ? "true" : "false"}`
     ];
     if (git.commit && /^[a-f0-9]{7,64}$/i.test(git.commit)) args.push("--commit-hash", git.commit);
-    const env = {
-      ...process.env,
+    const env = sanitizedChildEnvironment(process.env, {
       CLOUDFLARE_ACCOUNT_ID: options.accountId,
       CLOUDFLARE_API_TOKEN: options.apiToken,
       WRANGLER_OUTPUT_FILE_PATH: outputFilePath,
@@ -305,7 +305,7 @@ export class CloudflarePagesDeployProvider {
       WRANGLER_SEND_METRICS: "false",
       NO_COLOR: "1",
       CI: "true"
-    };
+    });
     try {
       await this.dependencies.runProcessImpl(process.execPath, args, {
         cwd: outputDir,
@@ -442,8 +442,7 @@ export class CloudflareWorkersDeployProvider {
       "--keep-vars",
       "--no-autoconfig"
     ];
-    const env = {
-      ...process.env,
+    const env = sanitizedChildEnvironment(process.env, {
       CLOUDFLARE_ACCOUNT_ID: options.accountId,
       CLOUDFLARE_API_TOKEN: options.apiToken,
       WRANGLER_OUTPUT_FILE_PATH: outputFilePath,
@@ -453,7 +452,7 @@ export class CloudflareWorkersDeployProvider {
       XDG_CACHE_HOME: "/tmp/kairix-wrangler/cache",
       NO_COLOR: "1",
       CI: "true"
-    };
+    });
     try {
       await this.dependencies.runProcessImpl(process.execPath, args, {
         cwd: path.dirname(assetsDir),
